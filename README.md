@@ -1,41 +1,24 @@
 # Zeus Pixel Tracker
 
-A lightweight, self-hosted tracking pixel built with Next.js and Supabase.  
-Tracks Google Ads click IDs (GCLID, WBRAID, GBRAID) and UTM parameters for offline conversion tracking.
-# Zeus Pixel Tracker
-
-A lightweight, self-hosted tracking pixel built with Next.js and Supabase.  
+A lightweight, self-hosted tracking pixel built with **Next.js** and **Supabase**.  
 Tracks Google Ads click IDs (GCLID, WBRAID, GBRAID) and UTM parameters for offline conversion tracking.
 
 ---
 
-## 🧠 What This Does
+## Features
 
-This system captures:
-
-- `gclid`, `wbraid`, `gbraid` from ad clicks
-- UTM parameters (source, medium, campaign)
-- Timestamp, page URL, IP, User-Agent
-- Custom `client_id` to track multiple client sites
-
-All data is stored in Supabase in a table called `click_events`.
+- Captures `gclid`, `wbraid`, `gbraid` from ad clicks
+- Logs UTM parameters (`utm_source`, `utm_medium`, `utm_campaign`)
+- Records timestamp, page URL, IP address, user agent
+- Stores all data in Supabase (`click_events` table)
+- Filters out irrelevant traffic (non-Google Ads clicks)
+- Supports multiple clients via `data-client="..."`
 
 ---
 
-## ⚙️ Tech Stack
+## Embed the Pixel on Client Websites
 
-- **Next.js (App Router)** — frontend + API routes
-- **Supabase** — data storage
-- **Vercel** — deployment
-- **Vanilla JS pixel** — added to any client website
-
----
-
-## 🚀 How to Use the Tracking Pixel (Client-Side)
-
-### 1. Add This to the Website
-
-Paste this anywhere in the client’s site HTML (usually in `<head>` or just before `</body>`):
+Add the following script tag to the client’s website (preferably in the `<head>` or before `</body>`):
 
 ```html
 <script
@@ -43,133 +26,81 @@ Paste this anywhere in the client’s site HTML (usually in `<head>` or just bef
   data-client="YOUR_CLIENT_ID"
   defer
 ></script>
+````
+
+Replace `YOUR_CLIENT_ID` with a unique name for each client, like `airco-plumbing` or `dentist-nyc`.
+
+---
+
+## When It Tracks
+
+The pixel will only track and log a visit if:
+
+* `utm_source=google` is present in the URL **OR**
+* A click ID is present: `gclid`, `wbraid`, or `gbraid`
+
+All other traffic is ignored by default to prevent logging irrelevant visits.
+
+---
+
+## How to Test
+
+1. Add the pixel to any site (or localhost).
+2. Visit a URL like:
+
+```
+https://example.com/?gclid=test123&utm_source=google&utm_campaign=test
 ```
 
-Replace `YOUR_CLIENT_ID` with a unique slug for the client (e.g. "airco-plumbing")
-
-### 🔍 When It Tracks
-
-The pixel will only log data if:
-
-- The page contains a `gclid`, `wbraid`, or `gbraid` in the URL
-- OR `utm_source=google` is present
-
-All other traffic is ignored (to avoid noise and overlogging).
-
-### 🧪 How to Test It
-
-Visit the deployed app:
+3. Visit your dashboard to confirm:
 
 ```
 https://zeus-orpin-chi.vercel.app
 ```
 
-Then visit a test URL on any site with:
-
-```
-?gclid=test123&utm_source=google&utm_campaign=test
-```
-
-Go back to the dashboard and see the row appear.
-
 ---
 
-## 🧠 What This Does
+## Local Development Setup
 
-This system captures:
+1. Clone the repo:
 
-- `gclid`, `wbraid`, `gbraid` from ad clicks
-- UTM parameters (source, medium, campaign)
-- Timestamp, page URL, IP, User-Agent
-- Custom `client_id` to track multiple client sites
-
-All data is stored in Supabase in a table called `click_events`.
-
----
-
-## ⚙️ Tech Stack
-
-- **Next.js (App Router)** — frontend + API routes
-- **Supabase** — data storage
-- **Vercel** — deployment
-- **Vanilla JS pixel** — added to any client website
-
----
-
-## 🚀 How to Use the Tracking Pixel (Client-Side)
-
-### 1. Add This to the Website
-
-Paste this anywhere in the client’s site HTML (usually in `<head>` or just before `</body>`):
-
-```html
-<script
-  src="https://zeus-orpin-chi.vercel.app/pixel.js"
-  data-client="YOUR_CLIENT_ID"
-  defer
-></script>
-Replace YOUR_CLIENT_ID with a unique slug for the client (e.g. "airco-plumbing")
-
-🔍 When It Tracks
-The pixel will only log data if:
-
-The page contains a gclid, wbraid, or gbraid in the URL
-OR
-
-utm_source=google is present
-
-All other traffic is ignored (to avoid noise and overlogging).
-
-🧪 How to Test It
-Visit the deployed app:
-
-arduino
-Copy
-Edit
-https://zeus-orpin-chi.vercel.app
-Then visit a test URL on any site with:
-
-bash
-Copy
-Edit
-?gclid=test123&utm_source=google&utm_campaign=test
-Go back to the dashboard and see the row appear.
-
-🛠️ Local Development Setup
-Clone the repo
-
-bash
-Copy
-Edit
+```bash
 git clone https://github.com/your-org/zeus-pixel.git
 cd zeus-pixel
-Install dependencies
+```
 
-bash
-Copy
-Edit
+2. Install dependencies:
+
+```bash
 npm install
-Set environment variables in .env.local:
+```
 
-env
-Copy
-Edit
-SUPABASE_URL=your_supabase_url
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-Start the dev server
+3. Create a `.env.local` file and add:
 
-bash
-Copy
-Edit
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-secret-service-role-key
+```
+
+4. Run the app:
+
+```bash
 npm run dev
-Visit http://localhost:3000 to view the dashboard
+```
 
-🧱 Supabase Schema
-Create the click_events table in Supabase:
+5. Open the dashboard at:
 
-sql
-Copy
-Edit
+```
+http://localhost:3000
+```
+
+---
+
+## Supabase Table Schema
+
+Run this SQL in Supabase SQL Editor to create the `click_events` table:
+
+```sql
 create extension if not exists "pgcrypto";
 
 create table public.click_events (
@@ -186,33 +117,47 @@ create table public.click_events (
   user_agent text,
   timestamp timestamptz default now()
 );
-Make sure Row-Level Security (RLS) is disabled or a proper service role key is used in your API route.
+```
 
-🌐 Deployment (Vercel)
-Push to GitHub
+Make sure **Row-Level Security (RLS)** is disabled **or** that your app uses a Supabase **service role key** for writes.
 
-Connect the repo to Vercel
+---
 
-Set environment variables in Vercel:
+## Deploy to Vercel
 
+1. Push the repo to GitHub.
+2. Connect the repo to [vercel.com](https://vercel.com).
+3. Set environment variables:
+
+```
 SUPABASE_URL
-
 SUPABASE_SERVICE_ROLE_KEY
+```
 
-Once deployed, the pixel is live at:
+Once deployed, your pixel will be live at:
 
-arduino
-Copy
-Edit
-https://your-vercel-url.vercel.app/pixel.js
-✅ To Do (Optional Enhancements)
-Add a CLI or UI for uploading offline conversions to Google Ads
+```
+https://your-vercel-project.vercel.app/pixel.js
+```
 
-Add cookie-based session tracking
+---
 
-Build client dashboards (filter by client_id)
+## Optional Improvements
 
-Secure pixel endpoint (HMAC or token validation)
+* Add cookie-based tracking for delayed conversions
+* Build a lead → conversion matching system
+* Auto-upload offline conversions to Google Ads API
+* Add spam protection (e.g. HMAC token validation)
+* Build client-specific dashboards and filters
 
-📬 Questions?
-Reach out to the maintainer or open an issue.
+---
+
+## License
+
+MIT
+
+---
+
+## Contact
+
+For questions or contributions, reach out to the maintainer or open an issue.
