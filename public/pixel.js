@@ -30,7 +30,7 @@
     document.addEventListener("DOMContentLoaded", () => {
         const { email, phone } = extractEmailAndPhone();
 
-        fetch("/api/track", {
+        fetch("https://zeus-orpin-chi.vercel.app/api/track", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
