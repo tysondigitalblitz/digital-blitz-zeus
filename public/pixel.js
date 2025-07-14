@@ -27,7 +27,7 @@
         };
     }
 
-    window.addEventListener("load", () => {
+    document.addEventListener("DOMContentLoaded", () => {
         const { email, phone } = extractEmailAndPhone();
 
         fetch("/api/track", {
