@@ -102,11 +102,21 @@
             'input[type="tel"]',
             'input[name*="phone" i]',
             'input[name*="tel" i]',
+            'input[name*="mobile" i]',
+            'input[name*="number" i]',
             'input[id*="phone" i]',
             'input[id*="tel" i]',
+            'input[id*="mobile" i]',
             'input[placeholder*="phone" i]',
+            'input[placeholder*="mobile" i]',
+            'input[placeholder*="number" i]',
             '[data-phone] input',
-            'input.phone-input'
+            '[data-tel] input',
+            'input.phone-input',
+            'input.tel-input',
+            // Common pattern for phone inputs that aren't type="tel"
+            'input[type="text"][name*="phone" i]',
+            'input[type="text"][placeholder*="phone" i]'
         ];
 
         // Platform-specific selectors
@@ -119,8 +129,20 @@
                 ],
                 phone: [
                     '[data-wix-type="Phone"] input',
+                    '[data-wix-type="Tel"] input',
                     '.wixui-text-input input[type="tel"]',
-                    '[data-testid="phoneInput"] input'
+                    '.wixui-text-input input[name*="phone"]',
+                    '[data-testid="phoneInput"] input',
+                    '[data-testid="telInput"] input',
+                    // Wix often uses text inputs for phone
+                    '.wixui-text-input input[type="text"][placeholder*="phone" i]',
+                    '.wixui-text-input input[type="text"][placeholder*="mobile" i]',
+                    '.wixui-text-input input[type="text"][placeholder*="number" i]',
+                    // Wix form builder specific
+                    '[data-input-type="phone"] input',
+                    '[data-input-type="tel"] input',
+                    'input[aria-label*="phone" i]',
+                    'input[aria-label*="mobile" i]'
                 ]
             },
             shopify: {
@@ -183,8 +205,10 @@
             try {
                 const elements = document.querySelectorAll(selector);
                 for (const element of elements) {
-                    if (element.value && element.value.length > 5) {
-                        phone = element.value;
+                    const value = element.value.trim();
+                    // More flexible phone validation
+                    if (value && value.length >= 7 && /[\d\s\-\(\)\+]+/.test(value)) {
+                        phone = value;
                         log("Found phone:", phone);
                         break;
                     }
@@ -198,9 +222,53 @@
         return { email, phone };
     }
 
+    // Session tracking to prevent duplicates
+    const sessionKey = `pixel_session_${clientId}_${window.location.pathname}`;
+    const sessionData = {
+        pageView: false,
+        lastEmail: null,
+        lastPhone: null,
+        lastSent: 0
+    };
+
+    // Load session data
+    try {
+        const saved = sessionStorage.getItem(sessionKey);
+        if (saved) Object.assign(sessionData, JSON.parse(saved));
+    } catch (e) {
+        log("Error loading session:", e);
+    }
+
+    // Save session data
+    function saveSession() {
+        try {
+            sessionStorage.setItem(sessionKey, JSON.stringify(sessionData));
+        } catch (e) {
+            log("Error saving session:", e);
+        }
+    }
+
     // Send tracking data with retry logic
-    async function sendTrackingData(attemptNumber = 1) {
+    async function sendTrackingData(attemptNumber = 1, forceTrack = false) {
         const { email, phone } = extractEmailAndPhone();
+
+        // Check if we should skip this tracking
+        if (!forceTrack) {
+            const now = Date.now();
+            const timeSinceLastSent = now - sessionData.lastSent;
+
+            // Skip if:
+            // 1. Page view already tracked and no new data
+            // 2. Same email/phone as last time
+            // 3. Sent within last 5 seconds (prevent rapid duplicates)
+            if (sessionData.pageView &&
+                sessionData.lastEmail === email &&
+                sessionData.lastPhone === phone &&
+                timeSinceLastSent < 5000) {
+                log("Skipping duplicate tracking");
+                return;
+            }
+        }
 
         const payload = {
             client_id: clientId,
@@ -225,6 +293,14 @@
 
             const data = await response.json();
             log("Success:", data);
+
+            // Update session data
+            sessionData.pageView = true;
+            sessionData.lastEmail = email;
+            sessionData.lastPhone = phone;
+            sessionData.lastSent = Date.now();
+            saveSession();
+
             return data;
         } catch (err) {
             log("Failed:", err);
@@ -240,8 +316,10 @@
 
     // Initialize tracking based on platform
     function initializeTracking() {
-        // Send initial page view
-        sendTrackingData();
+        // Only send initial page view if not already tracked
+        if (!sessionData.pageView) {
+            sendTrackingData();
+        }
 
         // Platform-specific initialization
         if (platform.isWix) {
@@ -250,7 +328,10 @@
             const wixInterval = setInterval(() => {
                 if (document.querySelector('[data-wix-roles="main"]') || wixReadyCheck > 10) {
                     clearInterval(wixInterval);
-                    setTimeout(sendTrackingData, 1000);
+                    // Only track if we haven't already
+                    if (!sessionData.pageView) {
+                        setTimeout(() => sendTrackingData(), 1000);
+                    }
                 }
                 wixReadyCheck++;
             }, 500);
@@ -260,26 +341,35 @@
         document.addEventListener('submit', (e) => {
             if (e.target.tagName === 'FORM') {
                 log("Form submitted");
-                sendTrackingData();
+                sendTrackingData(1, true); // Force track on form submit
             }
         });
 
         // Listen for input changes (debounced)
         let inputTimer;
         document.addEventListener('input', (e) => {
-            if (e.target.matches('input[type="email"], input[type="tel"]')) {
+            if (e.target.matches('input[type="email"], input[type="tel"], input[type="text"]')) {
                 clearTimeout(inputTimer);
                 inputTimer = setTimeout(() => {
-                    log("Input changed, tracking...");
-                    sendTrackingData();
+                    const { email, phone } = extractEmailAndPhone();
+                    // Only track if we have new data
+                    if ((email && email !== sessionData.lastEmail) ||
+                        (phone && phone !== sessionData.lastPhone)) {
+                        log("New input detected, tracking...");
+                        sendTrackingData();
+                    }
                 }, 2000);
             }
         });
 
-        // Track on page visibility change (user leaving)
+        // Track on page visibility change (user leaving) - only if we have new data
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                sendTrackingData();
+                const { email, phone } = extractEmailAndPhone();
+                if ((email && email !== sessionData.lastEmail) ||
+                    (phone && phone !== sessionData.lastPhone)) {
+                    sendTrackingData(1, true);
+                }
             }
         });
     }
@@ -298,17 +388,25 @@
 
     // Expose API for manual tracking
     window.pixelTrack = {
-        track: sendTrackingData,
+        track: () => sendTrackingData(1, true), // Force track
         setEmail: (email) => {
             window.pixelEmail = email;
-            sendTrackingData();
+            sendTrackingData(1, true);
         },
         setPhone: (phone) => {
             window.pixelPhone = phone;
-            sendTrackingData();
+            sendTrackingData(1, true);
         },
         debug: (enabled) => {
             config.debug = enabled;
+        },
+        reset: () => {
+            // Reset session to allow fresh tracking
+            sessionData.pageView = false;
+            sessionData.lastEmail = null;
+            sessionData.lastPhone = null;
+            sessionData.lastSent = 0;
+            saveSession();
         }
     };
 
