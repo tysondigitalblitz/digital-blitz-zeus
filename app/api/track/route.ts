@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Build the insert object dynamically to handle optional fields
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const insertData: any = {
             client_id,
             gclid,
