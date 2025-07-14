@@ -27,6 +27,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <script
+          src="/pixel.js"
+          data-client="test-client"
+          defer
+        ></script>
         {children}
       </body>
     </html>
