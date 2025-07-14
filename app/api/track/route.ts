@@ -22,6 +22,14 @@ export async function POST(req: NextRequest) {
         page_url,
     } = body;
 
+    const isGoogleTraffic =
+        utm_source === 'google' || Boolean(gclid || wbraid || gbraid);
+
+    if (!isGoogleTraffic) {
+        console.log('Skipping non-Google traffic');
+        return NextResponse.json({ skipped: true }, { status: 200 });
+    }
+
     const { error } = await supabase.from('click_events').insert([
         {
             client_id,
