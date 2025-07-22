@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Users, MousePointer, Mail, Phone, Globe } from 'lucide-react';
-import type { DashboardData, MetricCardProps } from '../../lib/types/dashboard-types';
+import type { DashboardData, MetricCardProps } from '../../../lib/types/dashboard-types';
 
 const Dashboard = () => {
     const [data, setData] = useState<DashboardData>({

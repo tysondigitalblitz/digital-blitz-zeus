@@ -6,7 +6,6 @@ export default async function Home() {
     .from("click_events")
     .select("*")
     .order("timestamp", { ascending: false })
-    .limit(20);
 
   return (
     <main className="p-6 max-w-4xl mx-auto">
