@@ -125,7 +125,8 @@ export async function POST(req: NextRequest) {
 
         // Option 3: Direct GCLID conversions (when you already know the GCLID)
         else if (body.directConversions) {
-            const formattedConversions = body.directConversions.map(conv => ({
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const formattedConversions = body.directConversions.map((conv: any) => ({
                 gclid: conv.gclid,
                 conversion_action: `customers/${GOOGLE_ADS_CUSTOMER_ID}/conversionActions/${CONVERSION_ACTION_ID}`,
                 conversion_date_time: conv.conversionDateTime,
@@ -152,8 +153,9 @@ export async function POST(req: NextRequest) {
 
     } catch (error) {
         console.error('Sync error:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
         return NextResponse.json(
-            { error: 'Sync failed', details: error.message },
+            { error: 'Sync failed', details: errorMessage },
             { status: 500 }
         );
     }
