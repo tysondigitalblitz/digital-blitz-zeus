@@ -136,7 +136,6 @@ const GoogleAdsConversionDashboard = () => {
                     </div>
                 </div>
 
-                {/* Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                     <div className="bg-gray-50 p-4 rounded-lg">
                         <p className="text-sm text-black">Total Conversions</p>
