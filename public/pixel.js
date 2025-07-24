@@ -4,7 +4,8 @@
         endpoint: "https://zeus-orpin-chi.vercel.app/api/track",
         debug: false, // Set to true for console logging
         retryAttempts: 3,
-        retryDelay: 1000
+        retryDelay: 1000,
+        sessionDuration: 30 * 60 * 1000 // 30 minutes
     };
 
     // Get client ID from various sources
@@ -66,9 +67,49 @@
 
     log("Initialized on platform:", getPlatform());
 
-    // Extract URL parameters
+    // ========================================
+    // ENHANCED: Persistent Session Management
+    // ========================================
+
+    const STORAGE_KEY = `pixel_tracking_${clientId}`;
+
+    // Get or create session data
+    function getSessionData() {
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                const data = JSON.parse(stored);
+                // Check if session is still valid (30 minutes)
+                if (Date.now() - data.created < config.sessionDuration) {
+                    return data;
+                }
+            }
+        } catch (e) {
+            log("Error loading session:", e);
+        }
+        return null;
+    }
+
+    // Save session data
+    function saveSessionData(data) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                ...data,
+                updated: Date.now()
+            }));
+        } catch (e) {
+            log("Error saving session:", e);
+        }
+    }
+
+    // Generate a unique session ID
+    function generateSessionId() {
+        return `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+
+    // Extract URL parameters (only on landing page)
     const urlParams = new URLSearchParams(window.location.search);
-    const trackingParams = {
+    const currentPageParams = {
         gclid: urlParams.get("gclid"),
         wbraid: urlParams.get("wbraid"),
         gbraid: urlParams.get("gbraid"),
@@ -78,6 +119,44 @@
         utm_term: urlParams.get("utm_term"),
         utm_content: urlParams.get("utm_content")
     };
+
+    // Initialize or retrieve session
+    let sessionData = getSessionData();
+
+    // If we have tracking params on current page, create/update session
+    if (currentPageParams.gclid || currentPageParams.wbraid || currentPageParams.gbraid) {
+        log("Found tracking params on current page, saving to session");
+        sessionData = {
+            sessionId: generateSessionId(),
+            trackingParams: currentPageParams,
+            landingPage: window.location.href,
+            created: Date.now(),
+            pageViews: [window.location.pathname]
+        };
+        saveSessionData(sessionData);
+    } else if (!sessionData) {
+        // No existing session and no tracking params - create basic session
+        sessionData = {
+            sessionId: generateSessionId(),
+            trackingParams: {},
+            landingPage: window.location.href,
+            created: Date.now(),
+            pageViews: [window.location.pathname]
+        };
+        saveSessionData(sessionData);
+    } else {
+        // Existing session - add current page to views
+        if (!sessionData.pageViews.includes(window.location.pathname)) {
+            sessionData.pageViews.push(window.location.pathname);
+            saveSessionData(sessionData);
+        }
+    }
+
+    // Use session tracking params if available
+    const trackingParams = sessionData.trackingParams || {};
+
+    log("Session data:", sessionData);
+    log("Tracking params:", trackingParams);
 
     // Enhanced email/phone extraction with platform-specific selectors
     function extractEmailAndPhone() {
@@ -161,11 +240,15 @@
                 email: [
                     '.wpcf7 input[type="email"]',
                     '.gform_wrapper input[type="email"]',
+                    '.wpforms-field-email input',
+                    '.elementor-field-type-email input',
                     '#email'
                 ],
                 phone: [
                     '.wpcf7 input[type="tel"]',
                     '.gform_wrapper input[type="tel"]',
+                    '.wpforms-field-phone input',
+                    '.elementor-field-type-tel input',
                     '#phone'
                 ]
             }
@@ -222,29 +305,29 @@
         return { email, phone };
     }
 
-    // Session tracking to prevent duplicates
-    const sessionKey = `pixel_session_${clientId}_${window.location.pathname}`;
-    const sessionData = {
-        pageView: false,
+    // Page-specific tracking prevention
+    const pageTrackingKey = `pixel_page_${clientId}_${window.location.pathname}`;
+    const pageData = {
+        tracked: false,
         lastEmail: null,
         lastPhone: null,
         lastSent: 0
     };
 
-    // Load session data
+    // Load page data
     try {
-        const saved = sessionStorage.getItem(sessionKey);
-        if (saved) Object.assign(sessionData, JSON.parse(saved));
+        const saved = sessionStorage.getItem(pageTrackingKey);
+        if (saved) Object.assign(pageData, JSON.parse(saved));
     } catch (e) {
-        log("Error loading session:", e);
+        log("Error loading page data:", e);
     }
 
-    // Save session data
-    function saveSession() {
+    // Save page data
+    function savePageData() {
         try {
-            sessionStorage.setItem(sessionKey, JSON.stringify(sessionData));
+            sessionStorage.setItem(pageTrackingKey, JSON.stringify(pageData));
         } catch (e) {
-            log("Error saving session:", e);
+            log("Error saving page data:", e);
         }
     }
 
@@ -255,15 +338,12 @@
         // Check if we should skip this tracking
         if (!forceTrack) {
             const now = Date.now();
-            const timeSinceLastSent = now - sessionData.lastSent;
+            const timeSinceLastSent = now - pageData.lastSent;
 
-            // Skip if:
-            // 1. Page view already tracked and no new data
-            // 2. Same email/phone as last time
-            // 3. Sent within last 5 seconds (prevent rapid duplicates)
-            if (sessionData.pageView &&
-                sessionData.lastEmail === email &&
-                sessionData.lastPhone === phone &&
+            // Skip if already tracked on this page with same data
+            if (pageData.tracked &&
+                pageData.lastEmail === email &&
+                pageData.lastPhone === phone &&
                 timeSinceLastSent < 5000) {
                 log("Skipping duplicate tracking");
                 return;
@@ -272,14 +352,19 @@
 
         const payload = {
             client_id: clientId,
-            ...trackingParams,
+            ...trackingParams, // This now includes persisted params
             page_url: window.location.href,
             page_title: document.title,
             referrer: document.referrer,
             platform: getPlatform(),
             email,
             phone,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            // Additional tracking data
+            session_id: sessionData.sessionId,
+            landing_page: sessionData.landingPage,
+            pages_viewed: sessionData.pageViews.length,
+            time_on_site: Math.floor((Date.now() - sessionData.created) / 1000)
         };
 
         log("Sending data (attempt " + attemptNumber + "):", payload);
@@ -294,12 +379,20 @@
             const data = await response.json();
             log("Success:", data);
 
-            // Update session data
-            sessionData.pageView = true;
-            sessionData.lastEmail = email;
-            sessionData.lastPhone = phone;
-            sessionData.lastSent = Date.now();
-            saveSession();
+            // Update page data
+            pageData.tracked = true;
+            pageData.lastEmail = email;
+            pageData.lastPhone = phone;
+            pageData.lastSent = Date.now();
+            savePageData();
+
+            // Update session if we captured email/phone
+            if (email || phone) {
+                sessionData.hasFormData = true;
+                if (email) sessionData.lastEmail = email;
+                if (phone) sessionData.lastPhone = phone;
+                saveSessionData(sessionData);
+            }
 
             return data;
         } catch (err) {
@@ -316,8 +409,9 @@
 
     // Initialize tracking based on platform
     function initializeTracking() {
-        // Only send initial page view if not already tracked
-        if (!sessionData.pageView) {
+        // Always send page view if we have tracking params from session
+        if (trackingParams.gclid || trackingParams.wbraid || trackingParams.gbraid) {
+            log("Have tracking params from session, sending page view");
             sendTrackingData();
         }
 
@@ -328,10 +422,7 @@
             const wixInterval = setInterval(() => {
                 if (document.querySelector('[data-wix-roles="main"]') || wixReadyCheck > 10) {
                     clearInterval(wixInterval);
-                    // Only track if we haven't already
-                    if (!sessionData.pageView) {
-                        setTimeout(() => sendTrackingData(), 1000);
-                    }
+                    setTimeout(() => sendTrackingData(), 1000);
                 }
                 wixReadyCheck++;
             }, 500);
@@ -345,29 +436,30 @@
             }
         });
 
-        // Listen for input changes (debounced)
+        // Enhanced input monitoring
         let inputTimer;
         document.addEventListener('input', (e) => {
             if (e.target.matches('input[type="email"], input[type="tel"], input[type="text"]')) {
                 clearTimeout(inputTimer);
                 inputTimer = setTimeout(() => {
                     const { email, phone } = extractEmailAndPhone();
-                    // Only track if we have new data
-                    if ((email && email !== sessionData.lastEmail) ||
-                        (phone && phone !== sessionData.lastPhone)) {
-                        log("New input detected, tracking...");
-                        sendTrackingData();
+                    // Track if we have new data AND we have session tracking params
+                    if ((email || phone) && (trackingParams.gclid || trackingParams.wbraid || trackingParams.gbraid)) {
+                        if ((email && email !== pageData.lastEmail) ||
+                            (phone && phone !== pageData.lastPhone)) {
+                            log("New input detected with tracking params, sending...");
+                            sendTrackingData();
+                        }
                     }
                 }, 2000);
             }
         });
 
-        // Track on page visibility change (user leaving) - only if we have new data
+        // Track on page visibility change
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 const { email, phone } = extractEmailAndPhone();
-                if ((email && email !== sessionData.lastEmail) ||
-                    (phone && phone !== sessionData.lastPhone)) {
+                if ((email || phone) && (trackingParams.gclid || trackingParams.wbraid || trackingParams.gbraid)) {
                     sendTrackingData(1, true);
                 }
             }
@@ -386,9 +478,9 @@
         setTimeout(initializeTracking, 1000);
     });
 
-    // Expose API for manual tracking
+    // Expose enhanced API
     window.pixelTrack = {
-        track: () => sendTrackingData(1, true), // Force track
+        track: () => sendTrackingData(1, true),
         setEmail: (email) => {
             window.pixelEmail = email;
             sendTrackingData(1, true);
@@ -401,12 +493,17 @@
             config.debug = enabled;
         },
         reset: () => {
-            // Reset session to allow fresh tracking
-            sessionData.pageView = false;
-            sessionData.lastEmail = null;
-            sessionData.lastPhone = null;
-            sessionData.lastSent = 0;
-            saveSession();
+            // Reset page tracking
+            pageData.tracked = false;
+            pageData.lastEmail = null;
+            pageData.lastPhone = null;
+            pageData.lastSent = 0;
+            savePageData();
+        },
+        getSession: () => sessionData,
+        clearSession: () => {
+            localStorage.removeItem(STORAGE_KEY);
+            sessionStorage.clear();
         }
     };
 

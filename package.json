@@ -25,6 +25,7 @@
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/date-fns": "^2.6.3",
+    "@types/long": "^5.0.0",
     "@types/node": "^20",
     "@types/papaparse": "^5.3.16",
     "@types/react": "^19",
