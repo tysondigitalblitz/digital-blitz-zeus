@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import supabase from '@/lib/supabase/server';
+import { GeolocationService } from '@/lib/geolocation/service';
 
 export async function OPTIONS() {
     return new NextResponse(null, {
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
 
         const ip =
-            req.headers.get("x-forwarded-for") ||
+            req.headers.get("x-forwarded-for")?.split(',')[0].trim() ||
             req.headers.get("x-real-ip") ||
             "unknown";
 
@@ -31,16 +32,21 @@ export async function POST(req: NextRequest) {
             utm_source,
             utm_medium,
             utm_campaign,
-            utm_term,        // New field
-            utm_content,     // New field
+            utm_term,
+            utm_content,
             page_url,
-            page_title,      // New field
-            referrer,        // New field
-            platform,        // New field
+            page_title,
+            referrer,
+            platform,
             email,
             phone,
-            timestamp,       // New field
-            test            // New field for testing
+            timestamp,
+            test,
+            // New fields from enhanced pixel
+            session_id,
+            landing_page,
+            pages_viewed,
+            time_on_site
         } = body;
 
         // Handle test requests
@@ -80,6 +86,18 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        // Get geolocation data
+        let geoData = null;
+        if (ip && ip !== "unknown") {
+            try {
+                const geoService = new GeolocationService();
+                geoData = await geoService.getLocation(ip);
+            } catch (geoError) {
+                // Log but don't fail the request
+                console.error("Geolocation error:", geoError);
+            }
+        }
+
         // Build the insert object dynamically to handle optional fields
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const insertData: any = {
@@ -105,6 +123,27 @@ export async function POST(req: NextRequest) {
         if (platform) insertData.platform = platform;
         if (timestamp) insertData.tracked_at = timestamp;
 
+        // Add session tracking fields
+        if (session_id) insertData.session_id = session_id;
+        if (landing_page) insertData.landing_page = landing_page;
+        if (pages_viewed) insertData.pages_viewed = pages_viewed;
+        if (time_on_site) insertData.time_on_site = time_on_site;
+
+        // Add geolocation data if available
+        if (geoData) {
+            insertData.geo_city = geoData.city;
+            insertData.geo_region = geoData.region;
+            insertData.geo_country = geoData.country_code;
+            insertData.geo_postal_code = geoData.postal_code;
+            insertData.geo_latitude = geoData.latitude;
+            insertData.geo_longitude = geoData.longitude;
+            insertData.geo_metro_code = geoData.metro_code;
+            insertData.geo_timezone = geoData.timezone;
+            insertData.geo_org = geoData.org;
+            insertData.geo_processed = true;
+            insertData.geo_processed_at = new Date().toISOString();
+        }
+
         const { error } = await supabase.from("click_events").insert([insertData]);
 
         if (error) {
@@ -127,7 +166,9 @@ export async function POST(req: NextRequest) {
             JSON.stringify({
                 success: true,
                 platform: platform || 'unknown',
-                tracked: true
+                tracked: true,
+                hasGeoData: !!geoData,
+                geoCountry: geoData?.country_code
             }),
             {
                 status: 200,
