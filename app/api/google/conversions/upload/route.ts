@@ -1,16 +1,26 @@
+// app/api/google/conversions/upload/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import supabase from '@/lib/supabase/server';
 import { AttributionEngine, OfflinePurchase } from '@/lib/attribution/matching-engine';
+import { EnhancedConversionUploadService } from '@/lib/google-ads/enahnced-conversion-upload';
 import Papa from 'papaparse';
+
 export async function POST(req: NextRequest) {
     try {
         const contentType = req.headers.get('content-type');
         let conversions = [];
         let fileName: string | null = null;
+        let businessId: string | null = null;
+        let googleAdsAccountId: string | null = null;
+        let autoSyncToGoogle = false;
+
         // Handle CSV upload
         if (contentType?.includes('multipart/form-data')) {
             const formData = await req.formData();
             const file = formData.get('file') as File;
+            businessId = formData.get('businessId') as string;
+            googleAdsAccountId = formData.get('googleAdsAccountId') as string;
+            autoSyncToGoogle = formData.get('autoSync') === 'true';
 
             if (!file) {
                 return NextResponse.json(
@@ -21,7 +31,28 @@ export async function POST(req: NextRequest) {
 
             fileName = file.name;
             const csvText = await file.text();
-            const { data, errors } = Papa.parse(csvText, {
+            const { data, errors } = Papa.parse<{
+                email?: string;
+                email_address?: string;
+                phone?: string;
+                phone_number?: string;
+                first_name?: string;
+                firstname?: string;
+                last_name?: string;
+                lastname?: string;
+                city?: string;
+                state?: string;
+                zip_code?: string;
+                zip?: string;
+                postal_code?: string;
+                purchase_amount?: string | number;
+                amount?: string | number;
+                total?: string | number;
+                purchase_date?: string;
+                date?: string;
+                order_id?: string;
+                id?: string;
+            }>(csvText, {
                 header: true,
                 dynamicTyping: true,
                 skipEmptyLines: true,
@@ -36,7 +67,7 @@ export async function POST(req: NextRequest) {
             }
 
             // Transform CSV data to conversion format
-            conversions = data.map((row: any) => ({
+            conversions = data.map((row) => ({
                 email: row.email || row.email_address || '',
                 phone: row.phone || row.phone_number || '',
                 firstName: row.first_name || row.firstname || '',
@@ -44,7 +75,7 @@ export async function POST(req: NextRequest) {
                 city: row.city || '',
                 state: row.state || '',
                 zipCode: row.zip_code || row.zip || row.postal_code || '',
-                purchaseAmount: parseFloat(row.purchase_amount || row.amount || row.total || 0),
+                purchaseAmount: parseFloat(row.purchase_amount as string ?? row.amount as string ?? row.total as string ?? '0'),
                 purchaseDate: row.purchase_date || row.date || new Date().toISOString(),
                 orderId: row.order_id || row.id || `GOOGLE-${Date.now()}-${Math.random().toString(36).substring(7)}`
             }));
@@ -53,6 +84,9 @@ export async function POST(req: NextRequest) {
         else {
             const body = await req.json();
             conversions = body.conversions || [];
+            businessId = body.businessId;
+            googleAdsAccountId = body.googleAdsAccountId;
+            autoSyncToGoogle = body.autoSync || false;
         }
 
         if (conversions.length === 0) {
@@ -63,7 +97,18 @@ export async function POST(req: NextRequest) {
         }
 
         // Validate conversions
-        const validConversions = conversions.filter(conv => {
+        const validConversions = conversions.filter((conv: {
+            email?: string;
+            phone?: string;
+            firstName?: string;
+            lastName?: string;
+            city?: string;
+            state?: string;
+            zipCode?: string;
+            purchaseAmount: number;
+            purchaseDate: string;
+            orderId: string;
+        }) => {
             return (conv.email || conv.phone) && conv.purchaseAmount > 0;
         });
 
@@ -78,7 +123,18 @@ export async function POST(req: NextRequest) {
         const batchId = `GOOGLE-BATCH-${Date.now()}`;
 
         // Save conversions to Google-specific table
-        const insertData = validConversions.map(conv => ({
+        const insertData = validConversions.map((conv: {
+            email?: string;
+            phone?: string;
+            firstName?: string;
+            lastName?: string;
+            city?: string;
+            state?: string;
+            zipCode?: string;
+            purchaseAmount: number;
+            purchaseDate: string;
+            orderId: string;
+        }) => ({
             email: conv.email || null,
             phone: conv.phone || null,
             first_name: conv.firstName || null,
@@ -91,6 +147,8 @@ export async function POST(req: NextRequest) {
             order_id: conv.orderId,
             upload_batch_id: batchId,
             file_name: fileName,
+            business_id: businessId,
+            google_ads_account_id: googleAdsAccountId,
             processed: false
         }));
 
@@ -109,8 +167,19 @@ export async function POST(req: NextRequest) {
 
         // Process matching for each conversion
         const engine = new AttributionEngine();
+        type MatchResult = {
+            matchType?: string;
+            confidence?: number;
+            gclid?: string;
+            clickEvent?: { id?: string };
+            attributionMethod?: string;
+            matchDetails?: unknown;
+            orderId?: string;
+            error?: string;
+        };
+
         const matchingResults = {
-            results: [] as any[],
+            results: [] as MatchResult[],
             summary: {
                 exactMatches: 0,
                 probableMatches: 0,
@@ -203,17 +272,28 @@ export async function POST(req: NextRequest) {
             error: result.error
         }));
 
+        // Auto-sync to Google Ads if requested
+        let googleSyncResult = null;
+        if (autoSyncToGoogle && googleAdsAccountId) {
+            googleSyncResult = await EnhancedConversionUploadService.uploadBatch(
+                batchId,
+                googleAdsAccountId,
+                process.env.DEFAULT_CONVERSION_ACTION_ID || '' // You'll need to handle this better
+            );
+        }
+
         return NextResponse.json({
             success: true,
             uploaded: conversions.length,
             processed: validConversions.length,
-            matched: matchingResults.results.filter(r => r.confidence > 0).length,
+            matched: matchingResults.results.filter(r => (r.confidence ?? 0) > 0).length,
             batchId,
             summary: {
                 ...matchingResults.summary,
                 averageConfidence
             },
-            details: details.slice(0, 10) // Return first 10 for UI display
+            details: details.slice(0, 10), // Return first 10 for UI display
+            googleSync: googleSyncResult
         });
 
     } catch (error) {
@@ -224,45 +304,6 @@ export async function POST(req: NextRequest) {
                 error: 'Failed to process conversions',
                 details: error instanceof Error ? error.message : 'Unknown error'
             },
-            { status: 500 }
-        );
-    }
-}
-// GET endpoint to check Google conversion status
-export async function GET(req: NextRequest) {
-    try {
-        const { searchParams } = new URL(req.url);
-        const batchId = searchParams.get('batchId');
-        let query = supabase
-            .from('google_conversions')
-            .select('*');
-
-        if (batchId) {
-            query = query.eq('upload_batch_id', batchId);
-        } else {
-            query = query.order('created_at', { ascending: false }).limit(100);
-        }
-
-        const { data, error } = await query;
-
-        if (error) throw error;
-
-        const summary = {
-            total: data?.length || 0,
-            processed: data?.filter(c => c.processed).length || 0,
-            matched: data?.filter(c => c.matched_gclid).length || 0,
-            syncedToGoogle: data?.filter(c => c.synced_to_google).length || 0
-        };
-
-        return NextResponse.json({
-            conversions: data,
-            summary
-        });
-
-    } catch (error) {
-        console.error('Fetch error:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch conversions' },
             { status: 500 }
         );
     }

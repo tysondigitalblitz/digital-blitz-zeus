@@ -1,12 +1,14 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Upload, FileText, CheckCircle, AlertCircle, Download, Info, BarChart3, RefreshCw, Eye, X } from 'lucide-react';
+import { Upload, FileText, CheckCircle, AlertCircle, Download, RefreshCw, X, Building2, Send } from 'lucide-react';
+
 interface UploadResult {
     success: boolean;
     error?: string;
     uploaded?: number;
     processed?: number;
     matched?: number;
+    batchId?: string;
     summary?: {
         exactMatches: number;
         probableMatches: number;
@@ -21,7 +23,13 @@ interface UploadResult {
         matchedGclid?: string;
         error?: string;
     }>;
+    googleSync?: {
+        success: boolean;
+        uploaded?: number;
+        error?: string;
+    };
 }
+
 interface RecentUpload {
     id: string;
     created_at: string;
@@ -30,7 +38,31 @@ interface RecentUpload {
     matched_records: number;
     platform: string;
 }
+
+interface Business {
+    id: string;
+    name: string;
+    description?: string;
+    pixel_id?: string;
+    google_ads_accounts?: GoogleAdsAccount[];
+}
+
+interface GoogleAdsAccount {
+    id: string;
+    customer_id: string;
+    account_name: string;
+    conversion_actions?: ConversionAction[];
+}
+
+interface ConversionAction {
+    id: string;
+    conversion_action_id: string;
+    conversion_action_name: string;
+    status: string;
+}
+
 const ConversionUploadPage = () => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const [platform, setPlatform] = useState<'google' | 'meta'>('google');
     const [file, setFile] = useState<File | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -39,22 +71,60 @@ const ConversionUploadPage = () => {
     const [showPreview, setShowPreview] = useState(false);
     const [csvPreview, setCsvPreview] = useState<string[][]>([]);
     const [validationErrors, setValidationErrors] = useState<string[]>([]);
-    const [manualEntry, setManualEntry] = useState({
-        email: '',
-        phone: '',
-        firstName: '',
-        lastName: '',
-        city: '',
-        state: '',
-        zipCode: '',
-        purchaseAmount: '',
-        purchaseDate: new Date().toISOString().split('T')[0],
-        orderId: ''
-    });
-    // Fetch recent uploads
+    const [syncing, setSyncing] = useState(false);
+
+    // Business & Account Selection
+    const [businesses, setBusinesses] = useState<Business[]>([]);
+    const [selectedBusiness, setSelectedBusiness] = useState('');
+    const [selectedAccount, setSelectedAccount] = useState('');
+    const [selectedConversionAction, setSelectedConversionAction] = useState('');
+    const [googleAdsAccounts, setGoogleAdsAccounts] = useState<GoogleAdsAccount[]>([]);
+    const [autoSync, setAutoSync] = useState(false);
+
+    // Fetch businesses on mount
     useEffect(() => {
+        fetchBusinesses();
         fetchRecentUploads();
-    }, [platform]);
+    }, []);
+
+    // Update accounts when business changes
+    useEffect(() => {
+        if (selectedBusiness) {
+            const business = businesses.find(b => b.id === selectedBusiness);
+            setGoogleAdsAccounts(business?.google_ads_accounts || []);
+            setSelectedAccount('');
+            setSelectedConversionAction('');
+        }
+    }, [selectedBusiness, businesses]);
+
+    // Update conversion actions when account changes
+    useEffect(() => {
+        if (selectedAccount) {
+            const account = googleAdsAccounts.find(a => a.id === selectedAccount);
+            if (account?.conversion_actions && account.conversion_actions.length > 0) {
+                // Auto-select first active conversion action
+                const activeAction = account.conversion_actions.find(ca => ca.status === 'ENABLED');
+                if (activeAction) {
+                    setSelectedConversionAction(activeAction.conversion_action_id);
+                }
+            }
+        }
+    }, [selectedAccount, googleAdsAccounts]);
+
+    const fetchBusinesses = async () => {
+        try {
+            const response = await fetch('/api/businesses');
+            const data = await response.json();
+            setBusinesses(data.businesses || []);
+
+            // Auto-select first business if only one exists
+            if (data.businesses?.length === 1) {
+                setSelectedBusiness(data.businesses[0].id);
+            }
+        } catch (error) {
+            console.error('Error fetching businesses:', error);
+        }
+    };
 
     const fetchRecentUploads = async () => {
         try {
@@ -135,11 +205,18 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
 
     // Upload CSV
     const handleCSVUpload = async () => {
-        if (!file || validationErrors.length > 0) return;
+        if (!file || validationErrors.length > 0 || !selectedBusiness) return;
 
         setUploading(true);
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('businessId', selectedBusiness);
+
+        if (selectedAccount) {
+            formData.append('googleAdsAccountId', selectedAccount);
+        }
+
+        formData.append('autoSync', autoSync.toString());
 
         try {
             const endpoint = platform === 'google'
@@ -158,6 +235,10 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
                 setFile(null);
                 setShowPreview(false);
                 setCsvPreview([]);
+
+                // Reset file input
+                const fileInput = document.getElementById('csv-upload') as HTMLInputElement;
+                if (fileInput) fileInput.value = '';
             }
         } catch (error) {
             console.error('Upload error:', error);
@@ -169,51 +250,44 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
         setUploading(false);
     };
 
-    // Manual entry
-    const handleManualSubmit = async () => {
-        setUploading(true);
-        try {
-            const endpoint = platform === 'google'
-                ? '/api/google/conversions/upload'
-                : '/api/meta/conversions/upload';
+    // Sync to Google Ads
+    const syncToGoogleAds = async () => {
+        if (!uploadResult?.batchId || !selectedAccount || !selectedConversionAction) return;
 
-            const response = await fetch(endpoint, {
+        setSyncing(true);
+        try {
+            const account = googleAdsAccounts.find(a => a.id === selectedAccount);
+            if (!account) throw new Error('Account not found');
+
+            const response = await fetch('/api/google-ads/upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    conversions: [{
-                        ...manualEntry,
-                        purchaseAmount: parseFloat(manualEntry.purchaseAmount),
-                        orderId: manualEntry.orderId || `${platform.toUpperCase()}-MANUAL-${Date.now()}`
-                    }]
+                    batchId: uploadResult.batchId,
+                    customerId: account.customer_id.replace(/-/g, ''), // Remove dashes
+                    conversionActionId: selectedConversionAction,
+                    conversions: uploadResult.details?.filter(d => d.matchedGclid).map(d => ({
+                        gclid: d.matchedGclid,
+                        conversionDateTime: new Date().toISOString(),
+                        conversionValue: 0, // You might want to include this from the upload
+                        orderId: d.orderId
+                    }))
                 })
             });
+
             const result = await response.json();
-            setUploadResult(result);
 
             if (result.success) {
-                setManualEntry({
-                    email: '',
-                    phone: '',
-                    firstName: '',
-                    lastName: '',
-                    city: '',
-                    state: '',
-                    zipCode: '',
-                    purchaseAmount: '',
-                    purchaseDate: new Date().toISOString().split('T')[0],
-                    orderId: ''
-                });
-                fetchRecentUploads();
+                alert(`Successfully synced ${result.totalUploaded} conversions to Google Ads!`);
+                setUploadResult({ ...uploadResult, googleSync: result });
+            } else {
+                alert(`Sync failed: ${result.error}`);
             }
         } catch (error) {
-            console.error('Submit error:', error);
-            setUploadResult({
-                success: false,
-                error: 'Submit failed. Please try again.'
-            });
+            console.error('Sync error:', error);
+            alert('Failed to sync to Google Ads');
         }
-        setUploading(false);
+        setSyncing(false);
     };
 
     return (
@@ -223,288 +297,209 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
                 <p className="text-black">Import your offline sales data to match with online ad clicks</p>
             </div>
 
-            {/* Platform Selector */}
+            {/* Business & Account Selection */}
             <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-                <h2 className="text-xl font-bold mb-4 text-black">Select Platform</h2>
-                <div className="flex gap-4">
-                    <button
-                        onClick={() => setPlatform('google')}
-                        className={`px-6 py-3 rounded-lg font-medium transition-colors ${platform === 'google'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-black hover:bg-gray-200'
-                            }`}
-                    >
-                        Google Ads
-                    </button>
-                    <button
-                        onClick={() => setPlatform('meta')}
-                        disabled
-                        className={`px-6 py-3 rounded-lg font-medium transition-colors ${platform === 'meta'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                            }`}
-                    >
-                        Meta Ads (Coming Soon)
-                    </button>
-                </div>
-            </div>
+                <h2 className="text-xl font-bold mb-4 text-black flex items-center gap-2">
+                    <Building2 className="w-6 h-6 text-blue-600" />
+                    Business & Platform Settings
+                </h2>
 
-            {/* Upload Methods */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                {/* CSV Upload */}
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-bold text-black">Bulk CSV Upload</h3>
-                        <Upload className="w-6 h-6 text-blue-600" />
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+                    <div>
+                        <label className="block text-sm font-medium mb-2 text-black">Business</label>
+                        <select
+                            value={selectedBusiness}
+                            onChange={(e) => setSelectedBusiness(e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg text-black bg-white"
+                        >
+                            <option value="">Select a business...</option>
+                            {businesses.map(business => (
+                                <option key={business.id} value={business.id}>
+                                    {business.name}
+                                </option>
+                            ))}
+                        </select>
                     </div>
 
-                    <p className="text-black mb-4">Upload multiple conversions at once using a CSV file</p>
-
-                    <button
-                        onClick={downloadSampleCSV}
-                        className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-4"
-                    >
-                        <Download className="w-4 h-4" />
-                        Download Sample CSV
-                    </button>
-
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center mb-4">
-                        <input
-                            type="file"
-                            accept=".csv"
-                            onChange={handleFileChange}
-                            className="hidden"
-                            id="csv-upload"
-                        />
-                        <label
-                            htmlFor="csv-upload"
-                            className="cursor-pointer block"
+                    <div>
+                        <label className="block text-sm font-medium mb-2 text-black">Google Ads Account</label>
+                        <select
+                            value={selectedAccount}
+                            onChange={(e) => setSelectedAccount(e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg text-black bg-white"
+                            disabled={!selectedBusiness || googleAdsAccounts.length === 0}
                         >
-                            {file ? (
-                                <div>
-                                    <FileText className="w-12 h-12 text-blue-600 mx-auto mb-2" />
-                                    <p className="text-black font-medium">{file.name}</p>
-                                    <p className="text-sm text-gray-600">
-                                        {(file.size / 1024).toFixed(2)} KB
-                                    </p>
-                                </div>
-                            ) : (
-                                <div>
-                                    <Upload className="w-12 h-12 text-gray-400 mx-auto mb-2" />
-                                    <p className="text-black">Drop your CSV here or click to browse</p>
-                                    <p className="text-sm text-gray-600 mt-1">Max file size: 10MB</p>
-                                </div>
-                            )}
+                            <option value="">
+                                {!selectedBusiness ? 'Select a business first' :
+                                    googleAdsAccounts.length === 0 ? 'No accounts connected' :
+                                        'Select account (optional)'}
+                            </option>
+                            {googleAdsAccounts.map(account => (
+                                <option key={account.id} value={account.id}>
+                                    {account.account_name} ({account.customer_id})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium mb-2 text-black">Conversion Action</label>
+                        <select
+                            value={selectedConversionAction}
+                            onChange={(e) => setSelectedConversionAction(e.target.value)}
+                            className="w-full px-3 py-2 border rounded-lg text-black bg-white"
+                            disabled={!selectedAccount}
+                        >
+                            <option value="">
+                                {!selectedAccount ? 'Select account first' : 'Select conversion action'}
+                            </option>
+                            {selectedAccount && googleAdsAccounts
+                                .find(a => a.id === selectedAccount)
+                                ?.conversion_actions
+                                ?.filter(ca => ca.status === 'ENABLED')
+                                .map(action => (
+                                    <option key={action.id} value={action.conversion_action_id}>
+                                        {action.conversion_action_name}
+                                    </option>
+                                ))}
+                        </select>
+                    </div>
+                </div>
+
+                {selectedBusiness && googleAdsAccounts.length === 0 && (
+                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <p className="text-sm text-yellow-800">
+                            No Google Ads accounts connected. Go to Settings to connect Google Ads.
+                        </p>
+                    </div>
+                )}
+
+                {selectedAccount && (
+                    <div className="mt-4">
+                        <label className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={autoSync}
+                                onChange={(e) => setAutoSync(e.target.checked)}
+                                className="rounded border-gray-300"
+                            />
+                            <span className="text-sm text-black">
+                                Automatically sync matched conversions to Google Ads after upload
+                            </span>
                         </label>
                     </div>
+                )}
+            </div>
 
-                    {/* CSV Preview */}
-                    {showPreview && csvPreview.length > 0 && (
-                        <div className="mb-4">
-                            <div className="flex items-center justify-between mb-2">
-                                <h4 className="font-medium text-black">Preview</h4>
-                                <button
-                                    onClick={() => setShowPreview(false)}
-                                    className="text-gray-500 hover:text-gray-700"
-                                >
-                                    <X className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="text-xs border rounded">
-                                    <tbody>
-                                        {csvPreview.slice(0, 5).map((row, i) => (
-                                            <tr key={i} className={i === 0 ? 'bg-gray-100 font-medium' : ''}>
-                                                {row.map((cell, j) => (
-                                                    <td key={j} className="border px-2 py-1 text-black">
-                                                        {cell || '-'}
-                                                    </td>
-                                                ))}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                                {csvPreview.length > 5 && (
-                                    <p className="text-sm text-gray-600 mt-1">
-                                        ... and {csvPreview.length - 5} more rows
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-                    )}
+            {/* CSV Upload */}
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-black">CSV Upload</h3>
+                    <Upload className="w-6 h-6 text-blue-600" />
+                </div>
 
-                    {/* Validation Errors */}
-                    {validationErrors.length > 0 && (
-                        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded">
-                            <p className="font-medium text-red-800 mb-1">Validation Errors:</p>
-                            <ul className="text-sm text-red-700 list-disc list-inside">
-                                {validationErrors.map((error, i) => (
-                                    <li key={i}>{error}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
+                <p className="text-black mb-4">Upload multiple conversions at once using a CSV file</p>
 
-                    <button
-                        onClick={handleCSVUpload}
-                        disabled={!file || uploading || validationErrors.length > 0}
-                        className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                <button
+                    onClick={downloadSampleCSV}
+                    className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-4"
+                >
+                    <Download className="w-4 h-4" />
+                    Download Sample CSV
+                </button>
+
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center mb-4">
+                    <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                        className="hidden"
+                        id="csv-upload"
+                        disabled={!selectedBusiness}
+                    />
+                    <label
+                        htmlFor="csv-upload"
+                        className={`cursor-pointer block ${!selectedBusiness ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
-                        {uploading ? 'Uploading...' : 'Upload CSV'}
-                    </button>
+                        {file ? (
+                            <div>
+                                <FileText className="w-12 h-12 text-blue-600 mx-auto mb-2" />
+                                <p className="text-black font-medium">{file.name}</p>
+                                <p className="text-sm text-gray-600">
+                                    {(file.size / 1024).toFixed(2)} KB
+                                </p>
+                            </div>
+                        ) : (
+                            <div>
+                                <Upload className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                                <p className="text-black">
+                                    {selectedBusiness ?
+                                        'Drop your CSV here or click to browse' :
+                                        'Select a business first'}
+                                </p>
+                                <p className="text-sm text-gray-600 mt-1">Max file size: 10MB</p>
+                            </div>
+                        )}
+                    </label>
                 </div>
 
-                {/* Manual Entry */}
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-bold text-black">Manual Entry</h3>
-                        <FileText className="w-6 h-6 text-green-600" />
+                {/* CSV Preview */}
+                {showPreview && csvPreview.length > 0 && (
+                    <div className="mb-4">
+                        <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium text-black">Preview</h4>
+                            <button
+                                onClick={() => {
+                                    setShowPreview(false);
+                                    setCsvPreview([]);
+                                }}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="text-xs border rounded">
+                                <tbody>
+                                    {csvPreview.slice(0, 5).map((row, i) => (
+                                        <tr key={i} className={i === 0 ? 'bg-gray-100 font-medium' : ''}>
+                                            {row.map((cell, j) => (
+                                                <td key={j} className="border px-2 py-1 text-black">
+                                                    {cell || '-'}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            {csvPreview.length > 5 && (
+                                <p className="text-sm text-gray-600 mt-1">
+                                    ... and {csvPreview.length - 5} more rows
+                                </p>
+                            )}
+                        </div>
                     </div>
+                )}
 
-                    <p className="text-black mb-4">Add individual conversions one at a time</p>
-
-                    <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">Email</label>
-                                <input
-                                    type="email"
-                                    placeholder="customer@example.com"
-                                    value={manualEntry.email}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, email: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">Phone</label>
-                                <input
-                                    type="tel"
-                                    placeholder="555-1234"
-                                    value={manualEntry.phone}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, phone: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">First Name</label>
-                                <input
-                                    type="text"
-                                    placeholder="John"
-                                    value={manualEntry.firstName}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, firstName: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">Last Name</label>
-                                <input
-                                    type="text"
-                                    placeholder="Doe"
-                                    value={manualEntry.lastName}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, lastName: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-3">
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">City</label>
-                                <input
-                                    type="text"
-                                    placeholder="New York"
-                                    value={manualEntry.city}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, city: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">State</label>
-                                <input
-                                    type="text"
-                                    placeholder="NY"
-                                    maxLength={2}
-                                    value={manualEntry.state}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, state: e.target.value.toUpperCase() })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">ZIP Code</label>
-                                <input
-                                    type="text"
-                                    placeholder="10001"
-                                    value={manualEntry.zipCode}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, zipCode: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">
-                                    Purchase Amount <span className="text-red-500">*</span>
-                                </label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    placeholder="150.00"
-                                    value={manualEntry.purchaseAmount}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, purchaseAmount: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-sm font-medium text-black mb-1 block">
-                                    Purchase Date <span className="text-red-500">*</span>
-                                </label>
-                                <input
-                                    type="date"
-                                    value={manualEntry.purchaseDate}
-                                    onChange={(e) => setManualEntry({ ...manualEntry, purchaseDate: e.target.value })}
-                                    className="w-full px-3 py-2 border rounded-lg text-black"
-                                />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="text-sm font-medium text-black mb-1 block">Order ID</label>
-                            <input
-                                type="text"
-                                placeholder="ORDER-12345 (optional)"
-                                value={manualEntry.orderId}
-                                onChange={(e) => setManualEntry({ ...manualEntry, orderId: e.target.value })}
-                                className="w-full px-3 py-2 border rounded-lg text-black"
-                            />
-                        </div>
-
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
-                            <div className="flex items-start gap-2">
-                                <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                                <div className="text-sm text-black">
-                                    <p className="font-medium">Matching Requirements:</p>
-                                    <ul className="list-disc list-inside mt-1 text-gray-700">
-                                        <li>Provide at least email OR phone</li>
-                                        <li>Location data improves match rate</li>
-                                        <li>Purchase date must be recent (within 90 days)</li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-
-                        <button
-                            onClick={handleManualSubmit}
-                            disabled={!manualEntry.purchaseAmount || uploading || (!manualEntry.email && !manualEntry.phone)}
-                            className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium mt-4"
-                        >
-                            {uploading ? 'Processing...' : 'Add Conversion'}
-                        </button>
+                {/* Validation Errors */}
+                {validationErrors.length > 0 && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded">
+                        <p className="font-medium text-red-800 mb-1">Validation Errors:</p>
+                        <ul className="text-sm text-red-700 list-disc list-inside">
+                            {validationErrors.map((error, i) => (
+                                <li key={i}>{error}</li>
+                            ))}
+                        </ul>
                     </div>
-                </div>
+                )}
+
+                <button
+                    onClick={handleCSVUpload}
+                    disabled={!file || uploading || validationErrors.length > 0 || !selectedBusiness}
+                    className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                >
+                    {uploading ? 'Uploading...' : 'Upload & Process'}
+                </button>
             </div>
 
             {/* Upload Results */}
@@ -550,7 +545,7 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
                             </div>
 
                             {uploadResult.summary && (
-                                <div className="bg-gray-50 rounded-lg p-4">
+                                <div className="bg-gray-50 rounded-lg p-4 mb-4">
                                     <h4 className="font-semibold mb-3 text-black">Match Breakdown</h4>
                                     <div className="space-y-2">
                                         <div className="flex justify-between items-center">
@@ -575,40 +570,31 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
                                 </div>
                             )}
 
-                            {uploadResult.details && uploadResult.details.length > 0 && (
-                                <div className="mt-4">
-                                    <h4 className="font-semibold mb-2 text-black">Detailed Results</h4>
-                                    <div className="max-h-60 overflow-y-auto">
-                                        <table className="w-full text-sm">
-                                            <thead className="bg-gray-50">
-                                                <tr>
-                                                    <th className="px-3 py-2 text-left text-black">Order ID</th>
-                                                    <th className="px-3 py-2 text-left text-black">Match Type</th>
-                                                    <th className="px-3 py-2 text-left text-black">Confidence</th>
-                                                    <th className="px-3 py-2 text-left text-black">GCLID</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {uploadResult.details.map((detail, i) => (
-                                                    <tr key={i} className="border-b">
-                                                        <td className="px-3 py-2 text-black">{detail.orderId}</td>
-                                                        <td className="px-3 py-2">
-                                                            <span className={`px-2 py-1 rounded-full text-xs ${detail.matchType === 'exact' ? 'bg-green-100 text-green-800' :
-                                                                detail.matchType === 'probable' ? 'bg-blue-100 text-blue-800' :
-                                                                    'bg-gray-100 text-gray-800'
-                                                                }`}>
-                                                                {detail.matchType}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-3 py-2 text-black">{detail.confidence}%</td>
-                                                        <td className="px-3 py-2 text-black font-mono text-xs">
-                                                            {detail.matchedGclid ? detail.matchedGclid.substring(0, 20) + '...' : '-'}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
+                            {/* Sync to Google Ads Button */}
+                            {selectedAccount && selectedConversionAction && !uploadResult.googleSync && (uploadResult.matched ?? 0) > 0 && (
+                                <button
+                                    onClick={syncToGoogleAds}
+                                    disabled={syncing}
+                                    className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium flex items-center justify-center gap-2"
+                                >
+                                    <Send className="w-5 h-5" />
+                                    {syncing ? 'Syncing to Google Ads...' : `Sync ${uploadResult.matched} Matched Conversions to Google Ads`}
+                                </button>
+                            )}
+
+                            {uploadResult.googleSync && (
+                                <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    <p className="text-green-800 font-medium">
+                                        ✓ Successfully synced {uploadResult.googleSync.uploaded} conversions to Google Ads
+                                    </p>
+                                </div>
+                            )}
+
+                            {selectedAccount && !selectedConversionAction && (uploadResult.matched ?? 0) > 0 && (
+                                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <p className="text-yellow-800">
+                                        Select a conversion action above to sync matched conversions to Google Ads
+                                    </p>
                                 </div>
                             )}
                         </div>
@@ -675,4 +661,5 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
         </div>
     );
 };
+
 export default ConversionUploadPage;
