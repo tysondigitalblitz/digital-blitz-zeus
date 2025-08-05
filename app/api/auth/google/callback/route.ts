@@ -114,31 +114,10 @@ export async function GET(req: NextRequest) {
 
         console.log('Refresh token saved successfully');
 
-        // Trigger initial account sync (optional - can be done separately)
-        try {
-            console.log('Triggering account sync...');
-            const syncResponse = await fetch(`${baseUrl}/api/google/accounts/sync`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    refreshToken: tokens.refresh_token,
-                    businessId,
-                }),
-            });
+        // REMOVED: Automatic account sync - we now use manual account setup
+        // The user will manually add Google Ads account details via the UI
 
-            if (!syncResponse.ok) {
-                const errorData = await syncResponse.text();
-                console.error('Account sync failed:', errorData);
-                // Don't fail the whole process if sync fails
-            } else {
-                console.log('Account sync triggered successfully');
-            }
-        } catch (syncError) {
-            console.error('Failed to trigger account sync:', syncError);
-            // Don't fail the whole process if sync fails
-        }
-
-        console.log('OAuth flow completed successfully');
+        console.log('OAuth flow completed successfully - ready for manual account setup');
         return NextResponse.redirect(`${baseUrl}/dashboard/google/settings?success=google_connected`);
 
     } catch (error) {

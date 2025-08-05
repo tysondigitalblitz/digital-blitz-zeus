@@ -1,50 +1,39 @@
 'use client';
+// app/dashboard/google/settings/page.tsx
 import React, { useState, useEffect } from 'react';
-import { Building2, Link, RefreshCw, CheckCircle, ExternalLink } from 'lucide-react';
-
-// Define interfaces
-interface ConversionAction {
-    id: string;
-    conversion_action_id: string;
-    conversion_action_name: string;
-    status: string;
-}
+import { Building2, Plus, ExternalLink, Settings, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
 
 interface GoogleAdsAccount {
     id: string;
+    business_id: string;
     customer_id: string;
     account_name: string;
+    conversion_action_id: string;
+    conversion_action_name: string;
     is_active: boolean;
-    conversion_actions?: ConversionAction[];
+    refresh_token?: string;
+    created_at: string;
 }
 
 interface Business {
     id: string;
     name: string;
     description?: string;
-    pixel_id?: string;
-    is_active: boolean;
-    google_ads_connected_at?: string;
-    google_ads_refresh_token?: string;
     google_ads_accounts?: GoogleAdsAccount[];
 }
 
-interface NewBusinessData {
-    name: string;
-    description: string;
-    pixelId: string;
-}
-
-const BusinessSettingsPage = () => {
+const SimplifiedGoogleAdsSetup = () => {
     const [businesses, setBusinesses] = useState<Business[]>([]);
-    const [loading, setLoading] = useState<boolean>(true);
-    const [syncing, setSyncing] = useState<Record<string, boolean>>({});
-    const [showNewBusiness, setShowNewBusiness] = useState<boolean>(false);
-    const [newBusiness, setNewBusiness] = useState<NewBusinessData>({
-        name: '',
-        description: '',
-        pixelId: ''
+    const [showAddAccount, setShowAddAccount] = useState(false);
+    const [selectedBusiness, setSelectedBusiness] = useState('');
+    const [newAccount, setNewAccount] = useState({
+        customer_id: '',
+        account_name: '',
+        conversion_action_id: '',
+        conversion_action_name: ''
     });
+    const [loading, setLoading] = useState(true);
+    const [testing, setTesting] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         fetchBusinesses();
@@ -62,119 +51,199 @@ const BusinessSettingsPage = () => {
         }
     };
 
-    const connectGoogleAds = (businessId: string) => {
-        window.location.href = `/api/auth/google?businessId=${businessId}`;
-    };
-
-    const syncAccounts = async (businessId: string, refreshToken: string) => {
-        setSyncing(prev => ({ ...prev, [businessId]: true }));
+    const addGoogleAdsAccount = async () => {
         try {
-            const response = await fetch('/api/google/accounts/sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ businessId, refreshToken }),
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                alert(`Synced ${result.synced} Google Ads accounts`);
-                fetchBusinesses(); // Refresh to show new accounts
-            } else {
-                alert('Failed to sync accounts');
-            }
-        } catch (error) {
-            console.error('Sync error:', error);
-            alert('Error syncing accounts');
-        } finally {
-            setSyncing(prev => ({ ...prev, [businessId]: false }));
-        }
-    };
-
-    const createBusiness = async () => {
-        try {
-            const response = await fetch('/api/businesses', {
+            const response = await fetch('/api/google/accounts/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: newBusiness.name,
-                    description: newBusiness.description,
-                    pixelId: newBusiness.pixelId
-                }),
+                    business_id: selectedBusiness,
+                    customer_id: newAccount.customer_id.replace(/\s+/g, ''), // Remove spaces
+                    account_name: newAccount.account_name,
+                    conversion_action_id: newAccount.conversion_action_id,
+                    conversion_action_name: newAccount.conversion_action_name
+                })
             });
 
             if (response.ok) {
-                setShowNewBusiness(false);
-                setNewBusiness({ name: '', description: '', pixelId: '' });
+                setShowAddAccount(false);
+                setNewAccount({ customer_id: '', account_name: '', conversion_action_id: '', conversion_action_name: '' });
+                setSelectedBusiness('');
                 fetchBusinesses();
+                alert('Google Ads account added successfully!');
+            } else {
+                const error = await response.json();
+                alert(`Error: ${error.message}`);
             }
         } catch (error) {
-            console.error('Error creating business:', error);
+            console.error('Error adding account:', error);
+            alert('Failed to add Google Ads account');
         }
     };
 
+    const testAccount = async (accountId: string) => {
+        setTesting(prev => ({ ...prev, [accountId]: true }));
+        try {
+            const response = await fetch(`/api/google/accounts/${accountId}/test`, {
+                method: 'POST'
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                alert('✅ Account connection test successful!');
+            } else {
+                alert(`❌ Test failed: ${result.error}`);
+            }
+        } catch (error) {
+            alert('❌ Test failed: Network error');
+            console.error('Error testing account:', error);
+        } finally {
+            setTesting(prev => ({ ...prev, [accountId]: false }));
+        }
+    };
+
+    const deleteAccount = async (accountId: string) => {
+        if (!confirm('Are you sure you want to delete this Google Ads account?')) return;
+
+        try {
+            const response = await fetch(`/api/google/accounts/${accountId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                fetchBusinesses();
+                alert('Account deleted successfully');
+            }
+        } catch (error) {
+            alert('Failed to delete account');
+            console.error('Error deleting account:', error);
+        }
+    };
+
+    const connectOAuth = (businessId: string) => {
+        // Redirect to OAuth flow to get refresh token
+        window.location.href = `/api/auth/google?businessId=${businessId}`;
+    };
+
     if (loading) {
-        return <div className="p-8 text-center">Loading businesses...</div>;
+        return <div className="p-8 text-center">Loading...</div>;
     }
 
     return (
         <div className="max-w-6xl mx-auto p-6">
             <div className="mb-8">
-                <h1 className="text-3xl font-bold mb-2 text-black">Business & Google Ads Settings</h1>
-                <p className="text-gray-600">Manage your businesses and Google Ads account connections</p>
+                <h1 className="text-3xl font-bold mb-2 text-black">Google Ads Account Setup</h1>
+                <p className="text-gray-600">Add your Google Ads accounts for enhanced conversion tracking</p>
             </div>
 
-            {/* Add New Business Button */}
+            {/* Add Account Button */}
             <button
-                onClick={() => setShowNewBusiness(true)}
-                className="mb-6 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                onClick={() => setShowAddAccount(true)}
+                className="mb-6 flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
-                Add New Business
+                <Plus className="w-4 h-4" />
+                Add Google Ads Account
             </button>
 
-            {/* New Business Form */}
-            {showNewBusiness && (
-                <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-                    <h3 className="text-lg font-bold mb-4 text-black">Create New Business</h3>
+            {/* Add Account Form */}
+            {showAddAccount && (
+                <div className="bg-white rounded-lg shadow-lg p-6 mb-6 border">
+                    <h3 className="text-lg font-bold mb-4 text-black">Add Google Ads Account</h3>
+
                     <div className="space-y-4">
                         <div>
-                            <label className="block text-sm font-medium mb-1 text-black">Business Name</label>
-                            <input
-                                type="text"
-                                value={newBusiness.name}
-                                onChange={(e) => setNewBusiness({ ...newBusiness, name: e.target.value })}
+                            <label className="block text-sm font-medium mb-1 text-black">Business</label>
+                            <select
+                                value={selectedBusiness}
+                                onChange={(e) => setSelectedBusiness(e.target.value)}
                                 className="w-full px-3 py-2 border rounded-lg text-black"
-                                placeholder="My Business"
-                            />
+                            >
+                                <option value="">Select a business...</option>
+                                {businesses.map(business => (
+                                    <option key={business.id} value={business.id}>
+                                        {business.name}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
+
                         <div>
-                            <label className="block text-sm font-medium mb-1 text-black">Description</label>
+                            <label className="block text-sm font-medium mb-1 text-black">
+                                Customer ID
+                                <span className="text-xs text-gray-500 ml-1">(Format: 123-456-7890)</span>
+                            </label>
                             <input
                                 type="text"
-                                value={newBusiness.description}
-                                onChange={(e) => setNewBusiness({ ...newBusiness, description: e.target.value })}
+                                value={newAccount.customer_id}
+                                onChange={(e) => setNewAccount({ ...newAccount, customer_id: e.target.value })}
                                 className="w-full px-3 py-2 border rounded-lg text-black"
-                                placeholder="Optional description"
+                                placeholder="123-456-7890"
+                                pattern="[0-9]{3}-[0-9]{3}-[0-9]{4}"
                             />
+                            <p className="text-xs text-gray-500 mt-1">
+                                Find this in Google Ads (top right corner) or in your Google Ads URL
+                            </p>
                         </div>
+
                         <div>
-                            <label className="block text-sm font-medium mb-1 text-black">Pixel ID</label>
+                            <label className="block text-sm font-medium mb-1 text-black">Account Name</label>
                             <input
                                 type="text"
-                                value={newBusiness.pixelId}
-                                onChange={(e) => setNewBusiness({ ...newBusiness, pixelId: e.target.value })}
+                                value={newAccount.account_name}
+                                onChange={(e) => setNewAccount({ ...newAccount, account_name: e.target.value })}
                                 className="w-full px-3 py-2 border rounded-lg text-black"
-                                placeholder="Your tracking pixel ID"
+                                placeholder="My Google Ads Account"
                             />
                         </div>
+
+                        <div>
+                            <label className="block text-sm font-medium mb-1 text-black">
+                                Conversion Action ID
+                                <span className="text-xs text-gray-500 ml-1">(Numbers only)</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={newAccount.conversion_action_id}
+                                onChange={(e) => setNewAccount({ ...newAccount, conversion_action_id: e.target.value })}
+                                className="w-full px-3 py-2 border rounded-lg text-black"
+                                placeholder="123456789"
+                            />
+                            <p className="text-xs text-gray-500 mt-1">
+                                Go to Tools & Settings → Conversions → Click your conversion → Copy the ID from the URL
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium mb-1 text-black">Conversion Action Name</label>
+                            <input
+                                type="text"
+                                value={newAccount.conversion_action_name}
+                                onChange={(e) => setNewAccount({ ...newAccount, conversion_action_name: e.target.value })}
+                                className="w-full px-3 py-2 border rounded-lg text-black"
+                                placeholder="Purchase"
+                            />
+                        </div>
+
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                            <p className="text-sm text-yellow-800">
+                                <strong>Need to connect OAuth?</strong> After adding the account, you will need to authorize
+                                Zeus to access your Google Ads account for API calls.
+                            </p>
+                        </div>
+
                         <div className="flex gap-2">
                             <button
-                                onClick={createBusiness}
-                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                                onClick={addGoogleAdsAccount}
+                                disabled={!selectedBusiness || !newAccount.customer_id || !newAccount.conversion_action_id}
+                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
                             >
-                                Create Business
+                                Add Account
                             </button>
                             <button
-                                onClick={() => setShowNewBusiness(false)}
+                                onClick={() => {
+                                    setShowAddAccount(false);
+                                    setNewAccount({ customer_id: '', account_name: '', conversion_action_id: '', conversion_action_name: '' });
+                                }}
                                 className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                             >
                                 Cancel
@@ -184,78 +253,95 @@ const BusinessSettingsPage = () => {
                 </div>
             )}
 
-            {/* Business List */}
+            {/* Instructions Card */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+                <h3 className="font-semibold text-blue-900 mb-3">How to find your Google Ads information:</h3>
+                <div className="space-y-2 text-sm text-blue-800">
+                    <div className="flex items-start gap-2">
+                        <span className="font-medium">1. Customer ID:</span>
+                        <span>Look in the top right corner of Google Ads (format: 123-456-7890)</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                        <span className="font-medium">2. Conversion Action ID:</span>
+                        <span>Tools & Settings → Conversions → Click your conversion → Copy ID from URL (after ocid=)</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                        <span className="font-medium">3. OAuth Connection:</span>
+                        <span>You will connect this after adding the account to authorize API access</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Existing Accounts */}
             <div className="space-y-6">
                 {businesses.map((business) => (
                     <div key={business.id} className="bg-white rounded-lg shadow-lg p-6">
-                        <div className="flex items-start justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                                <Building2 className="w-6 h-6 text-blue-600" />
-                                <div>
-                                    <h2 className="text-xl font-bold text-black">{business.name}</h2>
-                                    {business.description && (
-                                        <p className="text-gray-600 text-sm">{business.description}</p>
-                                    )}
-                                    {business.pixel_id && (
-                                        <p className="text-gray-500 text-xs">Pixel ID: {business.pixel_id}</p>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                                {business.google_ads_connected_at ? (
-                                    <>
-                                        <CheckCircle className="w-5 h-5 text-green-600" />
-                                        <span className="text-sm text-green-600">Connected</span>
-                                        <button
-                                            onClick={() => business.google_ads_refresh_token && syncAccounts(business.id, business.google_ads_refresh_token)}
-                                            disabled={syncing[business.id]}
-                                            className="ml-2 p-2 text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-50"
-                                        >
-                                            <RefreshCw className={`w-5 h-5 ${syncing[business.id] ? 'animate-spin' : ''}`} />
-                                        </button>
-                                    </>
-                                ) : (
-                                    <button
-                                        onClick={() => connectGoogleAds(business.id)}
-                                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                                    >
-                                        <Link className="w-4 h-4" />
-                                        Connect Google Ads
-                                    </button>
-                                )}
-                            </div>
+                        <div className="flex items-center gap-3 mb-4">
+                            <Building2 className="w-6 h-6 text-blue-600" />
+                            <h2 className="text-xl font-bold text-black">{business.name}</h2>
                         </div>
 
-                        {/* Google Ads Accounts */}
-                        {business.google_ads_accounts && business.google_ads_accounts.length > 0 && (
-                            <div className="mt-4 border-t pt-4">
-                                <h3 className="font-semibold mb-2 text-black">Google Ads Accounts</h3>
-                                <div className="space-y-2">
-                                    {business.google_ads_accounts.map((account) => (
-                                        <div key={account.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                            <div>
-                                                <p className="font-medium text-black">{account.account_name}</p>
-                                                <p className="text-sm text-gray-600">ID: {account.customer_id}</p>
-                                            </div>
+                        {business.google_ads_accounts && business.google_ads_accounts.length > 0 ? (
+                            <div className="space-y-3">
+                                {business.google_ads_accounts.map((account) => (
+                                    <div key={account.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                        <div>
                                             <div className="flex items-center gap-2">
-                                                {account.conversion_actions && account.conversion_actions.length > 0 && (
-                                                    <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                                                        {account.conversion_actions.length} conversion actions
-                                                    </span>
+                                                <p className="font-medium text-black">{account.account_name}</p>
+                                                {account.refresh_token ? (
+                                                    <CheckCircle className="w-4 h-4 text-green-600" aria-label="OAuth Connected" />
+                                                ) : (
+                                                    <AlertCircle className="w-4 h-4 text-yellow-600" aria-label="OAuth Not Connected" />
                                                 )}
-                                                <a
-                                                    href={`https://ads.google.com/aw/overview?__u=${account.customer_id.replace(/-/g, '')}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="p-1 text-gray-500 hover:text-blue-600"
-                                                >
-                                                    <ExternalLink className="w-4 h-4" />
-                                                </a>
                                             </div>
+                                            <p className="text-sm text-gray-600">Customer ID: {account.customer_id}</p>
+                                            <p className="text-sm text-gray-600">Conversion: {account.conversion_action_name}</p>
                                         </div>
-                                    ))}
-                                </div>
+
+                                        <div className="flex items-center gap-2">
+                                            {!account.refresh_token && (
+                                                <button
+                                                    onClick={() => connectOAuth(business.id)}
+                                                    className="px-3 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                                                >
+                                                    Connect OAuth
+                                                </button>
+                                            )}
+
+                                            <button
+                                                onClick={() => testAccount(account.id)}
+                                                disabled={testing[account.id]}
+                                                className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                                            >
+                                                {testing[account.id] ? 'Testing...' : 'Test'}
+                                            </button>
+
+                                            <a
+                                                href={`https://ads.google.com/aw/overview?__u=${account.customer_id.replace(/-/g, '')}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="p-1 text-gray-500 hover:text-blue-600"
+                                                title="Open in Google Ads"
+                                            >
+                                                <ExternalLink className="w-4 h-4" />
+                                            </a>
+
+                                            <button
+                                                onClick={() => deleteAccount(account.id)}
+                                                className="p-1 text-gray-500 hover:text-red-600"
+                                                title="Delete Account"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-8 text-gray-500">
+                                <Settings className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                <p>No Google Ads accounts configured</p>
+                                <p className="text-sm">Click Add Google Ads Account to get started</p>
                             </div>
                         )}
                     </div>
@@ -265,12 +351,12 @@ const BusinessSettingsPage = () => {
             {businesses.length === 0 && (
                 <div className="bg-white rounded-lg shadow-lg p-12 text-center">
                     <Building2 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-600">No businesses configured yet.</p>
-                    <p className="text-gray-600">Click Add New Business to get started.</p>
+                    <p className="text-gray-600">No businesses found.</p>
+                    <p className="text-gray-600">Create a business first, then add Google Ads accounts.</p>
                 </div>
             )}
         </div>
     );
 };
 
-export default BusinessSettingsPage;
+export default SimplifiedGoogleAdsSetup;

@@ -1,40 +1,83 @@
 // app/api/businesses/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import supabase from '@/lib/supabase/server';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
 
-// GET all businesses with their Google Ads accounts
 export async function GET() {
     try {
-        const { data, error } = await supabase
+        const supabase = createRouteHandlerClient({ cookies });
+
+        // First get businesses
+        const { data: businesses, error: businessError } = await supabase
             .from('businesses')
-            .select(`
-        *,
-        google_ads_accounts (
-          *,
-          conversion_actions:google_ads_conversion_actions(*)
-        )
-      `)
+            .select('*')
+            .eq('is_active', true)
             .order('created_at', { ascending: false });
 
-        if (error) throw error;
+        if (businessError) {
+            console.error('Error fetching businesses:', businessError);
+            return NextResponse.json(
+                { error: 'Failed to fetch businesses' },
+                { status: 500 }
+            );
+        }
+
+        // For each business, get their Google Ads accounts (if any)
+        const businessesWithAccounts = await Promise.all(
+            (businesses || []).map(async (business) => {
+                const { data: googleAdsAccounts } = await supabase
+                    .from('google_ads_accounts')
+                    .select(`
+                        id,
+                        customer_id,
+                        account_name,
+                        is_active,
+                        refresh_token,
+                        created_at,
+                        conversion_actions:google_ads_conversion_actions(
+                            id,
+                            conversion_action_id,
+                            conversion_action_name,
+                            status
+                        )
+                    `)
+                    .eq('business_id', business.id)
+                    .eq('is_active', true);
+
+                return {
+                    ...business,
+                    // Include the business-level OAuth status
+                    hasGoogleOAuth: !!business.google_ads_refresh_token,
+                    googleOAuthConnectedAt: business.google_ads_connected_at,
+                    // Include any configured Google Ads accounts
+                    google_ads_accounts: googleAdsAccounts?.map(account => ({
+                        ...account,
+                        // Use account-level refresh token if available, otherwise business-level
+                        hasOAuth: !!(account.refresh_token || business.google_ads_refresh_token),
+                        conversion_actions: account.conversion_actions || []
+                    })) || []
+                };
+            })
+        );
 
         return NextResponse.json({
-            businesses: data || [],
+            success: true,
+            businesses: businessesWithAccounts
         });
+
     } catch (error) {
-        console.error('Error fetching businesses:', error);
+        console.error('Businesses API error:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch businesses' },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }
 }
 
-// POST create new business
 export async function POST(req: NextRequest) {
     try {
-        const body = await req.json();
-        const { name, description, pixelId } = body;
+        const supabase = createRouteHandlerClient({ cookies });
+        const { name, description, pixelId } = await req.json();
 
         if (!name) {
             return NextResponse.json(
@@ -43,26 +86,37 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        const { data, error } = await supabase
+        const { data: newBusiness, error: insertError } = await supabase
             .from('businesses')
-            .insert({
-                name,
-                description,
-                pixel_id: pixelId,
-            })
+            .insert([
+                {
+                    name,
+                    description: description || null,
+                    pixel_id: pixelId || null,
+                    is_active: true
+                }
+            ])
             .select()
             .single();
 
-        if (error) throw error;
+        if (insertError) {
+            console.error('Error creating business:', insertError);
+            return NextResponse.json(
+                { error: 'Failed to create business' },
+                { status: 500 }
+            );
+        }
 
         return NextResponse.json({
             success: true,
-            business: data,
+            business: newBusiness,
+            message: 'Business created successfully'
         });
+
     } catch (error) {
-        console.error('Error creating business:', error);
+        console.error('Create business error:', error);
         return NextResponse.json(
-            { error: 'Failed to create business' },
+            { error: 'Internal server error' },
             { status: 500 }
         );
     }

@@ -9,7 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.50.4",
+    "@supabase/auth-helpers-nextjs": "^0.10.0",
+    "@supabase/supabase-js": "^2.53.0",
     "@types/crypto-js": "^4.2.2",
     "@types/uuid": "^10.0.0",
     "date-fns": "^4.1.0",
