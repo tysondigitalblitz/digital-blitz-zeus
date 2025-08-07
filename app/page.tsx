@@ -90,7 +90,7 @@ export default function HomePage() {
                   Login
                 </Link>
                 <Link
-                  href="/signup"
+                  href="/sign-up"
                   className="px-6 py-2 bg-gradient-to-r from-yellow-400 to-orange-500 text-black rounded-full font-semibold hover:shadow-lg hover:shadow-yellow-400/25 transition-all duration-300"
                 >
                   Sign Up

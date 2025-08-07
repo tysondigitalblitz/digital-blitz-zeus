@@ -1,12 +1,6 @@
-// lib/google-ads/config.ts
-import { GoogleAdsApi, enums } from 'google-ads-api';
+// lib/google-ads/config.ts - ACTUALLY Fixed version
+import { GoogleAdsApi } from 'google-ads-api';
 import crypto from 'crypto';
-
-// Environment variables needed:
-// GOOGLE_ADS_CLIENT_ID - OAuth2 client ID
-// GOOGLE_ADS_CLIENT_SECRET - OAuth2 client secret
-// GOOGLE_ADS_DEVELOPER_TOKEN - Developer token from Google Ads
-// GOOGLE_ADS_MANAGER_CUSTOMER_ID - Your MCC account ID
 
 export interface GoogleAdsConfig {
     client_id: string;
@@ -14,7 +8,7 @@ export interface GoogleAdsConfig {
     developer_token: string;
     refresh_token?: string;
     customer_id?: string;
-    login_customer_id?: string; // MCC account ID for accessing client accounts
+    login_customer_id?: string;
 }
 
 export class GoogleAdsClient {
@@ -37,9 +31,7 @@ export class GoogleAdsClient {
         });
     }
 
-    // Get authenticated customer instance
     async getCustomer(customerId: string, refreshToken: string) {
-        // Remove hyphens from customer ID
         const cleanCustomerId = customerId.replace(/-/g, '');
 
         return this.client.Customer({
@@ -49,10 +41,8 @@ export class GoogleAdsClient {
         });
     }
 
-    // Get list of accessible accounts under MCC
     async getAccessibleAccounts(refreshToken: string) {
         try {
-            // Use the MCC account to get accessible accounts
             const mccCustomerId = (this.config.login_customer_id || process.env.GOOGLE_ADS_MANAGER_CUSTOMER_ID || '').replace(/-/g, '');
 
             if (!mccCustomerId) {
@@ -65,7 +55,6 @@ export class GoogleAdsClient {
                 login_customer_id: mccCustomerId,
             });
 
-            // Query to get all customer clients
             const query = `
                 SELECT
                   customer_client.id,
@@ -96,48 +85,48 @@ export class GoogleAdsClient {
         }
     }
 
-    // Get conversion actions for an account
     async getConversionActions(customerId: string, refreshToken: string) {
-        try {
-            const customer = await this.getCustomer(customerId, refreshToken);
+        // Use getCustomer to ensure login_customer_id is included
+        const customer = await this.getCustomer(customerId, refreshToken);
 
-            const query = `
-                SELECT
-                  conversion_action.id,
-                  conversion_action.name,
-                  conversion_action.type,
-                  conversion_action.category,
-                  conversion_action.status,
-                  conversion_action.include_in_conversions_metric,
-                  conversion_action.value_settings.default_value,
-                  conversion_action.value_settings.default_currency_code,
-                  conversion_action.value_settings.always_use_default_value
-                FROM conversion_action
-                WHERE conversion_action.status = 'ENABLED'
-            `;
+        const query = `
+            SELECT 
+                conversion_action.id,
+                conversion_action.name,
+                conversion_action.type,
+                conversion_action.category,
+                conversion_action.status,
+                conversion_action.include_in_conversions_metric,
+                conversion_action.value_settings.default_value,
+                conversion_action.value_settings.default_currency_code,
+                conversion_action.value_settings.always_use_default_value,
+                conversion_action.resource_name,
+                conversion_action.tracking_code_type,
+                conversion_action.attribution_model_settings.attribution_model
+            FROM conversion_action
+            WHERE conversion_action.status = 'ENABLED'
+        `;
 
-            const response = await customer.query(query);
+        const result = await customer.query(query);
 
-            return response.map((row: any) => ({
-                id: row.conversion_action.id.toString(),
-                name: row.conversion_action.name,
-                type: row.conversion_action.type,
-                category: row.conversion_action.category,
-                status: row.conversion_action.status,
-                includeInConversionsMetric: row.conversion_action.include_in_conversions_metric,
-                valueSettings: {
-                    defaultValue: row.conversion_action.value_settings?.default_value,
-                    defaultCurrencyCode: row.conversion_action.value_settings?.default_currency_code,
-                    alwaysUseDefaultValue: row.conversion_action.value_settings?.always_use_default_value,
-                },
-            }));
-        } catch (error) {
-            console.error('Error fetching conversion actions:', error);
-            throw error;
-        }
+        return result.map((row: any) => ({
+            id: row.conversion_action.id,
+            name: row.conversion_action.name,
+            type: row.conversion_action.type,
+            category: row.conversion_action.category,
+            status: row.conversion_action.status,
+            includeInConversionsMetric: row.conversion_action.include_in_conversions_metric,
+            valueSettings: {
+                defaultValue: row.conversion_action.value_settings?.default_value,
+                defaultCurrencyCode: row.conversion_action.value_settings?.default_currency_code,
+                alwaysUseDefaultValue: row.conversion_action.value_settings?.always_use_default_value,
+            },
+            resourceName: row.conversion_action.resource_name,
+            trackingCodeType: row.conversion_action.tracking_code_type,
+            attributionModel: row.conversion_action.attribution_model_settings?.attribution_model
+        }));
     }
 
-    // Helper function to hash PII
     private hashValue(value: string): string {
         if (!value) return '';
         return crypto
@@ -146,7 +135,6 @@ export class GoogleAdsClient {
             .digest('hex');
     }
 
-    // Upload enhanced conversions
     async uploadEnhancedConversions(
         customerId: string,
         refreshToken: string,
@@ -155,141 +143,136 @@ export class GoogleAdsClient {
         try {
             const customer = await this.getCustomer(customerId, refreshToken);
 
-            // Prepare the conversions in the correct format for google-ads-api
-            const uploadRequest = {
-                customer_id: customerId.replace(/-/g, ''),
-                conversions: conversions.map(conv => {
-                    // Build user identifiers in the format expected by the API
-                    const userIdentifiers: any[] = [];
+            // Build the conversions array properly
+            const formattedConversions = conversions.map(conv => {
+                const userIdentifiers: any[] = [];
 
-                    // Add hashed email if available
-                    if (conv.hashedEmail) {
-                        userIdentifiers.push({
-                            hashed_email: conv.hashedEmail,
-                        });
-                    }
+                if (conv.hashedEmail) {
+                    userIdentifiers.push({
+                        hashedEmail: conv.hashedEmail,
+                        userIdentifierSource: 'FIRST_PARTY'
+                    });
+                }
 
-                    // Add hashed phone if available
-                    if (conv.hashedPhoneNumber) {
-                        userIdentifiers.push({
-                            hashed_phone_number: conv.hashedPhoneNumber,
-                        });
-                    }
+                if (conv.hashedPhoneNumber) {
+                    userIdentifiers.push({
+                        hashedPhoneNumber: conv.hashedPhoneNumber,
+                        userIdentifierSource: 'FIRST_PARTY'
+                    });
+                }
 
-                    // Add address info if available
-                    if (conv.addressInfo) {
-                        userIdentifiers.push({
-                            address_info: {
-                                hashed_first_name: conv.addressInfo.hashedFirstName,
-                                hashed_last_name: conv.addressInfo.hashedLastName,
-                                city: conv.addressInfo.city,
-                                state: conv.addressInfo.state,
-                                country_code: conv.addressInfo.countryCode,
-                                postal_code: conv.addressInfo.postalCode,
-                            },
-                        });
-                    }
-
-                    return {
-                        gclid: conv.gclid,
-                        conversion_action: conv.conversionAction,
-                        conversion_date_time: conv.conversionDateTime,
-                        conversion_value: conv.conversionValue,
-                        currency_code: conv.currencyCode || 'USD',
-                        order_id: conv.orderId,
-                        user_identifiers: userIdentifiers,
-                        consent: {
-                            ad_storage: enums.ConsentStatus.GRANTED,
-                            ad_user_data: enums.ConsentStatus.GRANTED,
-                            ad_personalization: enums.ConsentStatus.GRANTED,
-                        },
+                if (conv.addressInfo) {
+                    const addressIdentifier: any = {
+                        userIdentifierSource: 'FIRST_PARTY',
+                        addressInfo: {}
                     };
-                }),
-                partial_failure: true,
-                validate_only: false,
-            };
 
-            // Upload conversions
+                    if (conv.addressInfo.hashedFirstName) {
+                        addressIdentifier.addressInfo.hashedFirstName = conv.addressInfo.hashedFirstName;
+                    }
+                    if (conv.addressInfo.hashedLastName) {
+                        addressIdentifier.addressInfo.hashedLastName = conv.addressInfo.hashedLastName;
+                    }
+                    if (conv.addressInfo.city) {
+                        addressIdentifier.addressInfo.city = conv.addressInfo.city;
+                    }
+                    if (conv.addressInfo.state) {
+                        addressIdentifier.addressInfo.state = conv.addressInfo.state;
+                    }
+                    if (conv.addressInfo.countryCode) {
+                        addressIdentifier.addressInfo.countryCode = conv.addressInfo.countryCode;
+                    }
+                    if (conv.addressInfo.postalCode) {
+                        addressIdentifier.addressInfo.postalCode = conv.addressInfo.postalCode;
+                    }
+
+                    userIdentifiers.push(addressIdentifier);
+                }
+
+                // Make sure we have the right format for conversion_action
+                const conversionAction = conv.conversionAction.startsWith('customers/')
+                    ? conv.conversionAction
+                    : `customers/${customerId.replace(/-/g, '')}/conversionActions/${conv.conversionAction}`;
+
+                const conversion: any = {
+                    conversionAction: conversionAction,
+                    conversionDateTime: conv.conversionDateTime,
+                    conversionValue: conv.conversionValue,
+                    currencyCode: conv.currencyCode || 'USD',
+                };
+
+                // Only add optional fields if they exist
+                if (conv.gclid) {
+                    conversion.gclid = conv.gclid;
+                }
+                if (conv.orderId) {
+                    conversion.orderId = conv.orderId;
+                }
+                if (userIdentifiers.length > 0) {
+                    conversion.userIdentifiers = userIdentifiers;
+                }
+
+                // Add consent
+                conversion.consent = {
+                    adUserData: 'GRANTED',
+                    adPersonalization: 'GRANTED'
+                };
+
+                return conversion;
+            });
+
+            console.log('Uploading conversions:', {
+                customerId,
+                conversionCount: formattedConversions.length,
+                sampleConversion: JSON.stringify(formattedConversions[0], null, 2)
+            });
+
+            // The google-ads-api library requires these fields
             const response = await customer.conversionUploads.uploadClickConversions({
-                customer_id: customerId.replace(/-/g, ''),
-                conversions: conversions.map(conv => {
-                    // Build user identifiers in the format expected by the API
-                    const userIdentifiers: any[] = [];
+                conversions: formattedConversions,
+                partialFailure: true,
+                validateOnly: false,
+                // These are required by the type definition but not actually used
+                customerId: customerId.replace(/-/g, ''),
+                debugEnabled: false
+            } as any); // Type assertion to handle the toJSON requirement
 
-                    // Add hashed email if available
-                    if (conv.hashedEmail) {
-                        userIdentifiers.push({
-                            hashed_email: conv.hashedEmail,
-                        });
-                    }
-
-                    // Add hashed phone if available
-                    if (conv.hashedPhoneNumber) {
-                        userIdentifiers.push({
-                            hashed_phone_number: conv.hashedPhoneNumber,
-                        });
-                    }
-
-                    // Add address info if available
-                    if (conv.addressInfo) {
-                        userIdentifiers.push({
-                            address_info: {
-                                hashed_first_name: conv.addressInfo.hashedFirstName,
-                                hashed_last_name: conv.addressInfo.hashedLastName,
-                                city: conv.addressInfo.city,
-                                state: conv.addressInfo.state,
-                                country_code: conv.addressInfo.countryCode,
-                                postal_code: conv.addressInfo.postalCode,
-                            },
-                        });
-                    }
-
-                    return {
-                        gclid: conv.gclid,
-                        conversion_action: conv.conversionAction,
-                        conversion_date_time: conv.conversionDateTime,
-                        conversion_value: conv.conversionValue,
-                        currency_code: conv.currencyCode || 'USD',
-                        order_id: conv.orderId,
-                        user_identifiers: userIdentifiers,
-                        consent: {
-                            ad_storage: enums.ConsentStatus.GRANTED,
-                            ad_user_data: enums.ConsentStatus.GRANTED,
-                            ad_personalization: enums.ConsentStatus.GRANTED,
-                        },
-                    };
-                }),
-                partial_failure: true,
-                validate_only: false,
-                debug_enabled: false,
-                toJSON: () => ({}), // Add this method as required by the type
-            } as any);
+            console.log('Upload response:', {
+                hasResults: !!response.results,
+                resultCount: response.results?.length,
+                hasPartialFailure: !!response.partial_failure_error
+            });
 
             return {
                 success: true,
                 results: response.results,
                 partialFailureError: response.partial_failure_error,
             };
-        } catch (error) {
-            console.error('Google Ads upload error:', error);
+        } catch (error: any) {
+            console.error('Google Ads upload error:', {
+                message: error.message,
+                code: error.code,
+                details: error.details,
+                requestId: error.request_id
+            });
+
             return {
                 success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
+                error: error.message || 'Unknown error',
+                errorCode: error.code,
+                errorDetails: error.details,
             };
         }
     }
 }
 
-// Types for enhanced conversions - simplified to match what we actually use
 export interface EnhancedConversionData {
-    gclid: string;
-    conversionAction: string; // Format: customers/{customer_id}/conversionActions/{conversion_action_id}
-    conversionDateTime: string; // ISO format
+    gclid?: string; // Make optional since Enhanced Conversions for Leads doesn't require it
+    conversionAction: string;
+    conversionDateTime: string;
     conversionValue: number;
     currencyCode?: string;
     orderId?: string;
-
-    // User identifiers - simplified format
     hashedEmail?: string;
     hashedPhoneNumber?: string;
     addressInfo?: {
@@ -302,5 +285,4 @@ export interface EnhancedConversionData {
     };
 }
 
-// Initialize default client
 export const googleAdsClient = new GoogleAdsClient();

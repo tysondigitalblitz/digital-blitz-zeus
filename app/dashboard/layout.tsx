@@ -1,4 +1,5 @@
 // app/dashboard/layout.tsx
+import Navbar from '@/components/navbar';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -20,6 +21,7 @@ export default async function DashboardLayout({
 
     return (
         <div className="min-h-screen bg-gray-50">
+            <Navbar />
             <main className="py-10">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     {children}
