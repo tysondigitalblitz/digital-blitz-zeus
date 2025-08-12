@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import supabase from '@/lib/supabase/server';
 
+// app/api/google/accounts/link/route.ts - Fixed POST method
 export async function POST(req: NextRequest) {
     try {
         const { businessId, googleAdsAccountId } = await req.json();
@@ -30,7 +31,10 @@ export async function POST(req: NextRequest) {
         // Verify the Google Ads account exists
         const { data: googleAdsAccount, error: accountError } = await supabase
             .from('google_ads_accounts')
-            .select('*')
+            .select(`
+                *,
+                business:businesses(name)
+            `)
             .eq('id', googleAdsAccountId)
             .single();
 
@@ -42,7 +46,11 @@ export async function POST(req: NextRequest) {
         }
 
         // Check if account is already linked to another business
-        if (googleAdsAccount.business_id && googleAdsAccount.business_id !== businessId) {
+        // BUT ignore the dummy business "__UNLINKED_ACCOUNTS__"
+        if (googleAdsAccount.business_id &&
+            googleAdsAccount.business_id !== businessId &&
+            googleAdsAccount.business?.name !== '__UNLINKED_ACCOUNTS__') {
+
             const { data: currentBusiness } = await supabase
                 .from('businesses')
                 .select('name')
@@ -113,6 +121,7 @@ export async function GET(req: NextRequest) {
             // Show accounts that are either unlinked OR already linked to this business
             query = query.or(`business_id.is.null,business_id.eq.${businessId}`);
         } else {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { data: accounts, error } = await supabase
                 .from('google_ads_accounts')
                 .select(`*`)
@@ -148,6 +157,7 @@ export async function GET(req: NextRequest) {
                 is_active: acc.is_active,
                 business_name: acc.business?.name || null,
                 conversion_actions_count: acc.conversion_actions?.length || 0,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 has_enhanced_conversions: acc.conversion_actions?.some((ca: any) => ca.conversion_type === '8') || false
             }))
         });

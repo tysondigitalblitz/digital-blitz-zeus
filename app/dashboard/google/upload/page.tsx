@@ -103,7 +103,7 @@ const ConversionUploadPage = () => {
             const account = googleAdsAccounts.find(a => a.id === selectedAccount);
             if (account?.conversion_actions && account.conversion_actions.length > 0) {
                 // Auto-select first active conversion action
-                const activeAction = account.conversion_actions.find(ca => ca.status === 'ENABLED');
+                const activeAction = account.conversion_actions.find(ca => ca.status === 'ENABLED' || ca.status === '2');
                 if (activeAction) {
                     setSelectedConversionAction(activeAction.conversion_action_id);
                 }
@@ -217,7 +217,9 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
         }
 
         formData.append('autoSync', autoSync.toString());
-
+        if (selectedConversionAction) {
+            formData.append('conversionActionId', selectedConversionAction);
+        }
         try {
             const endpoint = platform === 'google'
                 ? '/api/google/conversions/upload'
@@ -356,7 +358,7 @@ jane@example.com,555-5678,Jane,Smith,Los Angeles,CA,90001,200.00,2024-01-16,ORDE
                             {selectedAccount && googleAdsAccounts
                                 .find(a => a.id === selectedAccount)
                                 ?.conversion_actions
-                                ?.filter(ca => ca.status === 'ENABLED')
+                                ?.filter(ca => ca.status === 'ENABLED' || ca.status === '2')
                                 .map(action => (
                                     <option key={action.id} value={action.conversion_action_id}>
                                         {action.conversion_action_name}

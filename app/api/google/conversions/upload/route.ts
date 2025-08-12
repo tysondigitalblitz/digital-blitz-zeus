@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
         let businessId: string | null = null;
         let googleAdsAccountId: string | null = null;
         let autoSyncToGoogle = false;
+        let selectedConversionActionId: string | null = null;
 
         // Handle CSV upload
         if (contentType?.includes('multipart/form-data')) {
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
             businessId = formData.get('businessId') as string;
             googleAdsAccountId = formData.get('googleAdsAccountId') as string;
             autoSyncToGoogle = formData.get('autoSync') === 'true';
+            selectedConversionActionId = formData.get('conversionActionId') as string;
 
             if (!file) {
                 return NextResponse.json(
@@ -87,6 +89,7 @@ export async function POST(req: NextRequest) {
             businessId = body.businessId;
             googleAdsAccountId = body.googleAdsAccountId;
             autoSyncToGoogle = body.autoSync || false;
+            selectedConversionActionId = body.conversionActionId;
         }
 
         if (conversions.length === 0) {
@@ -272,14 +275,37 @@ export async function POST(req: NextRequest) {
             error: result.error
         }));
 
-        // Auto-sync to Google Ads if requested
         let googleSyncResult = null;
         if (autoSyncToGoogle && googleAdsAccountId) {
-            googleSyncResult = await EnhancedConversionUploadService.uploadBatch(
-                batchId,
-                googleAdsAccountId,
-                process.env.DEFAULT_CONVERSION_ACTION_ID || '' // You'll need to handle this better
-            );
+            console.log(`Auto-syncing conversions to Google Ads...`);
+            console.log(`Account ID: ${googleAdsAccountId}`);
+
+            if (!selectedConversionActionId) {
+                console.error('No conversion action selected for auto-sync');
+                googleSyncResult = {
+                    success: false,
+                    error: 'No conversion action selected for auto-sync'
+                };
+            } else {
+                console.log(`Using user-selected conversion action ID: ${selectedConversionActionId}`);
+
+                try {
+                    // Call the Enhanced Conversion Upload Service with the selected action
+                    googleSyncResult = await EnhancedConversionUploadService.uploadBatch(
+                        batchId,
+                        googleAdsAccountId,
+                        selectedConversionActionId  // Use the user's selection directly
+                    );
+
+                    console.log('Auto-sync result:', googleSyncResult);
+                } catch (error) {
+                    console.error('Auto-sync error:', error);
+                    googleSyncResult = {
+                        success: false,
+                        error: 'Auto-sync failed: ' + (error instanceof Error ? error.message : 'Unknown error')
+                    };
+                }
+            }
         }
 
         return NextResponse.json({

@@ -266,29 +266,41 @@ const ImprovedGoogleAdsSetup = () => {
                                 className="w-full px-3 py-2 border rounded-lg text-black"
                             >
                                 <option value="">Select an account from your synced accounts...</option>
+
+                                {/* Show unlinked accounts first */}
                                 {availableAccounts
-                                    .filter(account => {
-                                        // Show all accounts, but prioritize unlinked ones
-                                        return !account.business_name ||
-                                            account.business_name === businesses.find(b => b.id === selectedBusiness)?.name;
-                                    })
-                                    .sort((a, b) => {
-                                        // Sort unlinked accounts first
-                                        if (!a.business_name && b.business_name) return -1;
-                                        if (a.business_name && !b.business_name) return 1;
-                                        return a.account_name.localeCompare(b.account_name);
-                                    })
+                                    .filter(account => !account.business_name)
                                     .map(account => (
                                         <option key={account.id} value={account.id}>
-                                            {account.account_name} ({account.customer_id})
-                                            {account.business_name ? ` - Currently linked to ${account.business_name}` : ' - Available'}
+                                            ✅ {account.account_name} ({account.customer_id}) - Available
                                             {account.has_enhanced_conversions && ' ✨'}
                                             {account.conversion_actions_count > 0 && ` - ${account.conversion_actions_count} conversions`}
                                         </option>
-                                    ))}
+                                    ))
+                                }
+
+                                {/* Show a separator if we have both unlinked and linked accounts */}
+                                {availableAccounts.filter(acc => !acc.business_name).length > 0 &&
+                                    availableAccounts.filter(acc => acc.business_name).length > 0 && (
+                                        <option disabled>───── Already Linked Accounts ─────</option>
+                                    )}
+
+                                {/* Show already linked accounts */}
+                                {availableAccounts
+                                    .filter(account => account.business_name)
+                                    .sort((a, b) => a.account_name.localeCompare(b.account_name))
+                                    .map(account => (
+                                        <option key={account.id} value={account.id}>
+                                            🔗 {account.account_name} ({account.customer_id}) - Linked to {account.business_name}
+                                            {account.has_enhanced_conversions && ' ✨'}
+                                            {account.conversion_actions_count > 0 && ` - ${account.conversion_actions_count} conversions`}
+                                        </option>
+                                    ))
+                                }
                             </select>
                             <p className="text-xs text-gray-500 mt-1">
-                                ✨ = Has Enhanced Conversion actions (type 8) | Unlinked accounts shown first
+                                ✅ = Available to link | 🔗 = Already linked | ✨ = Has Enhanced Conversions |
+                                You can re-link accounts to different businesses
                             </p>
                         </div>
 

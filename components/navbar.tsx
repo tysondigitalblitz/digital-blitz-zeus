@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { Menu, X, Home, Upload, BarChart3, Settings, LogOut, User, Building2, ExternalLink } from 'lucide-react';
+import { Menu, X, Home, Upload, BarChart3, Settings, LogOut, User, Building2, ExternalLink, ArrowRight } from 'lucide-react';
 
 const Navbar = () => {
     const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -47,6 +47,7 @@ const Navbar = () => {
         { name: 'Google Settings', href: '/dashboard/google/settings', icon: Settings },
         { name: 'Test', href: '/dashboard/google/test', icon: ExternalLink },
         { name: 'Config', href: '/dashboard/businesses', icon: Building2 },
+        { name: 'Enhance Conversions', href: '/dashboard/google/enhance-conversions', icon: ArrowRight },
     ];
 
     const isActive = (href: string) => pathname === href;
@@ -67,7 +68,7 @@ const Navbar = () => {
 
     return (
         <nav className="bg-white shadow-lg sticky top-0 z-50">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16">
                     {/* Logo and Desktop Navigation */}
                     <div className="flex">
@@ -78,7 +79,7 @@ const Navbar = () => {
                         </div>
 
                         {user && (
-                            <div className="hidden sm:ml-8 sm:flex sm:space-x-6">
+                            <div className="hidden sm:ml-8 sm:flex sm:space-x-6 items-center justify-center">
                                 {navigation.map((item) => {
                                     const Icon = item.icon;
                                     return (

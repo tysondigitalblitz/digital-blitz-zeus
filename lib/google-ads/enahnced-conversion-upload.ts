@@ -29,6 +29,7 @@ export class EnhancedConversionUploadService {
 
     // Prepare conversion data for Google Ads API
     static prepareConversionData(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         conversion: any,
         conversionActionId: string,
         customerId: string
@@ -46,10 +47,10 @@ export class EnhancedConversionUploadService {
             return '+' + cleaned;
         };
 
-        return {
-            gclid: conversion.matched_gclid,
+        const conversionData = {
+            gclid: conversion.matched_gclid || undefined,
             conversionAction: `customers/${customerId}/conversionActions/${conversionActionId}`,
-            conversionDateTime: new Date(conversion.purchase_date).toISOString(),
+            conversion_date_time: new Date(conversion.purchase_date).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '+00:00'),
             conversionValue: parseFloat(conversion.purchase_amount),
             currencyCode: 'USD',
             orderId: conversion.order_id,
@@ -62,11 +63,17 @@ export class EnhancedConversionUploadService {
                 hashedLastName: conversion.last_name ? this.hash(conversion.last_name) : undefined,
                 city: conversion.city,
                 state: conversion.state,
-                countryCode: 'US', // You may want to make this dynamic
+                countryCode: 'US',
                 postalCode: conversion.zip_code,
             } : undefined,
         };
+
+        // Add this debug log:
+        console.log('Prepared conversion data:', JSON.stringify(conversionData, null, 2));
+
+        return conversionData;
     }
+
 
     // Upload conversions to Google Ads
     static async uploadBatch(
@@ -93,7 +100,6 @@ export class EnhancedConversionUploadService {
                 .eq('upload_batch_id', batchId)
                 .eq('processed', true)
                 .eq('synced_to_google', false)
-                .not('matched_gclid', 'is', null)
                 .limit(1000); // Google Ads API limit
 
             if (convError || !conversions || conversions.length === 0) {
@@ -201,8 +207,13 @@ export class EnhancedConversionUploadService {
 
                 if (!pendingBatches || pendingBatches.length === 0) continue;
 
+                console.log('Checking Enhanced Conversions for Leads setting...');
+                const enhancedConversionsSettings = await googleAdsClient.checkEnhancedConversionsForLeads(account.customer_id, account.refresh_token);
+                console.log('Enhanced Conversions for Leads settings:', enhancedConversionsSettings);
+
                 // Find the default conversion action (or you can make this configurable)
                 const conversionAction = account.conversion_actions?.find(
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     (action: any) => action.status === 'ENABLED'
                 );
 

@@ -1,6 +1,6 @@
-// lib/google-ads/config.ts - ACTUALLY Fixed version
+// lib/google-ads/config.ts - Fixed Enhanced Conversions Upload
 import { GoogleAdsApi } from 'google-ads-api';
-import crypto from 'crypto';
+// import crypto from 'crypto';
 
 export interface GoogleAdsConfig {
     client_id: string;
@@ -70,6 +70,7 @@ export class GoogleAdsClient {
 
             const response = await customer.query(query);
 
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return response.map((row: any) => ({
                 customerId: row.customer_client.id.toString(),
                 descriptiveName: row.customer_client.descriptive_name,
@@ -85,30 +86,32 @@ export class GoogleAdsClient {
         }
     }
 
+    // Update the getConversionActions method in your lib/google-ads/config.ts
+    // Replace the existing query with this fixed version:
+
     async getConversionActions(customerId: string, refreshToken: string) {
-        // Use getCustomer to ensure login_customer_id is included
         const customer = await this.getCustomer(customerId, refreshToken);
 
         const query = `
-            SELECT 
-                conversion_action.id,
-                conversion_action.name,
-                conversion_action.type,
-                conversion_action.category,
-                conversion_action.status,
-                conversion_action.include_in_conversions_metric,
-                conversion_action.value_settings.default_value,
-                conversion_action.value_settings.default_currency_code,
-                conversion_action.value_settings.always_use_default_value,
-                conversion_action.resource_name,
-                conversion_action.tracking_code_type,
-                conversion_action.attribution_model_settings.attribution_model
-            FROM conversion_action
-            WHERE conversion_action.status = 'ENABLED'
-        `;
+        SELECT 
+            conversion_action.id,
+            conversion_action.name,
+            conversion_action.type,
+            conversion_action.category,
+            conversion_action.status,
+            conversion_action.include_in_conversions_metric,
+            conversion_action.value_settings.default_value,
+            conversion_action.value_settings.default_currency_code,
+            conversion_action.value_settings.always_use_default_value,
+            conversion_action.resource_name,
+            conversion_action.attribution_model_settings.attribution_model
+        FROM conversion_action
+        WHERE conversion_action.status = 'ENABLED'
+    `;
 
         const result = await customer.query(query);
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return result.map((row: any) => ({
             id: row.conversion_action.id,
             name: row.conversion_action.name,
@@ -122,17 +125,33 @@ export class GoogleAdsClient {
                 alwaysUseDefaultValue: row.conversion_action.value_settings?.always_use_default_value,
             },
             resourceName: row.conversion_action.resource_name,
-            trackingCodeType: row.conversion_action.tracking_code_type,
+            // Removed trackingCodeType - not available in current API version
             attributionModel: row.conversion_action.attribution_model_settings?.attribution_model
         }));
     }
 
-    private hashValue(value: string): string {
-        if (!value) return '';
-        return crypto
-            .createHash('sha256')
-            .update(value.toLowerCase().trim())
-            .digest('hex');
+    // Add this method to your GoogleAdsClient class in config.ts
+    async checkEnhancedConversionsForLeads(customerId: string, refreshToken: string) {
+        try {
+            const customer = await this.getCustomer(customerId, refreshToken);
+
+            const query = `
+            SELECT 
+                customer.id,
+                customer.descriptive_name,
+                conversion_tracking_setting.enhanced_conversions_for_leads_enabled,
+                conversion_tracking_setting.enhanced_conversions_for_web_enabled
+            FROM customer
+            LIMIT 1
+        `;
+
+            const result = await customer.query(query);
+            console.log('Enhanced Conversions Settings:', result);
+            return result;
+        } catch (error) {
+            console.error('Error checking enhanced conversions settings:', error);
+            throw error;
+        }
     }
 
     async uploadEnhancedConversions(
@@ -142,114 +161,106 @@ export class GoogleAdsClient {
     ) {
         try {
             const customer = await this.getCustomer(customerId, refreshToken);
+            const cleanCustomerId = customerId.replace(/-/g, '');
 
-            // Build the conversions array properly
+            console.log(`Uploading ${conversions.length} enhanced conversions for customer ${cleanCustomerId}`);
+
+            // Build the conversions array for Enhanced Conversions
+            // Build the conversions array for Enhanced Conversions
             const formattedConversions = conversions.map(conv => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const userIdentifiers: any[] = [];
 
+                // Only add email if it exists
                 if (conv.hashedEmail) {
                     userIdentifiers.push({
-                        hashedEmail: conv.hashedEmail,
-                        userIdentifierSource: 'FIRST_PARTY'
+                        hashed_email: conv.hashedEmail
                     });
                 }
 
+                // Only add phone if it exists  
                 if (conv.hashedPhoneNumber) {
                     userIdentifiers.push({
-                        hashedPhoneNumber: conv.hashedPhoneNumber,
-                        userIdentifierSource: 'FIRST_PARTY'
+                        hashed_phone_number: conv.hashedPhoneNumber
                     });
                 }
 
-                if (conv.addressInfo) {
-                    const addressIdentifier: any = {
-                        userIdentifierSource: 'FIRST_PARTY',
-                        addressInfo: {}
-                    };
+                // Skip address info for now - it might not be supported by this conversion action
 
-                    if (conv.addressInfo.hashedFirstName) {
-                        addressIdentifier.addressInfo.hashedFirstName = conv.addressInfo.hashedFirstName;
-                    }
-                    if (conv.addressInfo.hashedLastName) {
-                        addressIdentifier.addressInfo.hashedLastName = conv.addressInfo.hashedLastName;
-                    }
-                    if (conv.addressInfo.city) {
-                        addressIdentifier.addressInfo.city = conv.addressInfo.city;
-                    }
-                    if (conv.addressInfo.state) {
-                        addressIdentifier.addressInfo.state = conv.addressInfo.state;
-                    }
-                    if (conv.addressInfo.countryCode) {
-                        addressIdentifier.addressInfo.countryCode = conv.addressInfo.countryCode;
-                    }
-                    if (conv.addressInfo.postalCode) {
-                        addressIdentifier.addressInfo.postalCode = conv.addressInfo.postalCode;
-                    }
-
-                    userIdentifiers.push(addressIdentifier);
-                }
-
-                // Make sure we have the right format for conversion_action
+                // Ensure we have the correct conversion action resource name
                 const conversionAction = conv.conversionAction.startsWith('customers/')
                     ? conv.conversionAction
-                    : `customers/${customerId.replace(/-/g, '')}/conversionActions/${conv.conversionAction}`;
+                    : `customers/${cleanCustomerId}/conversionActions/${conv.conversionAction}`;
 
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const conversion: any = {
-                    conversionAction: conversionAction,
-                    conversionDateTime: conv.conversionDateTime,
-                    conversionValue: conv.conversionValue,
-                    currencyCode: conv.currencyCode || 'USD',
+                    conversion_action: conversionAction,
+                    conversion_date_time: conv.conversion_date_time,
+                    conversion_value: conv.conversionValue,
+                    currency_code: conv.currencyCode || 'USD',
+                    user_identifiers: userIdentifiers
                 };
 
-                // Only add optional fields if they exist
+                // Add optional fields
                 if (conv.gclid) {
                     conversion.gclid = conv.gclid;
                 }
                 if (conv.orderId) {
-                    conversion.orderId = conv.orderId;
-                }
-                if (userIdentifiers.length > 0) {
-                    conversion.userIdentifiers = userIdentifiers;
+                    conversion.order_id = conv.orderId;  // ← Note: snake_case
                 }
 
-                // Add consent
+                // Enhanced Conversions consent (required)
                 conversion.consent = {
-                    adUserData: 'GRANTED',
-                    adPersonalization: 'GRANTED'
+                    ad_user_data: 'GRANTED',           // ← Note: snake_case
+                    ad_personalization: 'GRANTED'      // ← Note: snake_case
                 };
 
                 return conversion;
             });
 
-            console.log('Uploading conversions:', {
-                customerId,
-                conversionCount: formattedConversions.length,
-                sampleConversion: JSON.stringify(formattedConversions[0], null, 2)
-            });
+            // Log the first conversion for debugging
+            if (formattedConversions.length > 0) {
+                console.log('Sample conversion data:', JSON.stringify(formattedConversions[0], null, 2));
+            }
 
-            // The google-ads-api library requires these fields
+            // Upload Enhanced Conversions using uploadClickConversions with user identifiers
             const response = await customer.conversionUploads.uploadClickConversions({
+                customer_id: cleanCustomerId,
                 conversions: formattedConversions,
-                partialFailure: true,
-                validateOnly: false,
-                // These are required by the type definition but not actually used
-                customerId: customerId.replace(/-/g, ''),
-                debugEnabled: false
-            } as any); // Type assertion to handle the toJSON requirement
-
-            console.log('Upload response:', {
-                hasResults: !!response.results,
-                resultCount: response.results?.length,
-                hasPartialFailure: !!response.partial_failure_error
+                partial_failure: true,
+                validate_only: false,
+                debug_enabled: false,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                toJSON: function (): { [k: string]: any; } {
+                    throw new Error('Function not implemented.');
+                }
             });
+
+            console.log('Enhanced conversion upload response:', {
+                hasResults: !!response.results,
+                resultCount: response.results?.length || 0,
+                hasPartialFailure: !!response.partial_failure_error,
+                partialFailureMessage: response.partial_failure_error?.message
+            });
+
+            // Check for partial failures
+            if (response.partial_failure_error) {
+                console.error('Partial failure in upload:', {
+                    message: response.partial_failure_error.message,
+                    code: response.partial_failure_error.code,
+                    details: response.partial_failure_error.details
+                });
+            }
 
             return {
                 success: true,
                 results: response.results,
                 partialFailureError: response.partial_failure_error,
+                uploadedCount: response.results?.length || 0
             };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
-            console.error('Google Ads upload error:', {
+            console.error('Enhanced conversion upload error:', {
                 message: error.message,
                 code: error.code,
                 details: error.details,
@@ -267,9 +278,9 @@ export class GoogleAdsClient {
 }
 
 export interface EnhancedConversionData {
-    gclid?: string; // Make optional since Enhanced Conversions for Leads doesn't require it
+    gclid?: string; // Optional for Enhanced Conversions for Leads
     conversionAction: string;
-    conversionDateTime: string;
+    conversion_date_time: string;
     conversionValue: number;
     currencyCode?: string;
     orderId?: string;

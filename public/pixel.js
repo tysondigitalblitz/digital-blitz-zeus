@@ -5,7 +5,8 @@
         debug: false, // Set to true for console logging
         retryAttempts: 3,
         retryDelay: 1000,
-        sessionDuration: 30 * 60 * 1000 // 30 minutes
+        sessionDuration: 30 * 60 * 1000, // 30 minutes
+        gclid_cookie_days: 90 // Google's maximum attribution window
     };
 
     // Get client ID from various sources
@@ -68,6 +69,110 @@
     log("Initialized on platform:", getPlatform());
 
     // ========================================
+    // ENHANCED: Data Normalization Functions
+    // ========================================
+
+    function normalizeEmail(email) {
+        if (!email) return null;
+
+        // Convert to lowercase and trim
+        email = email.toLowerCase().trim();
+
+        // Remove dots before @ for Gmail and Googlemail
+        if (email.includes('@gmail.com') || email.includes('@googlemail.com')) {
+            const [localPart, domain] = email.split('@');
+            email = localPart.replace(/\./g, '') + '@' + domain;
+        }
+
+        return email;
+    }
+
+    function normalizePhone(phone) {
+        if (!phone) return null;
+
+        // Remove all non-digits
+        phone = phone.replace(/\D/g, '');
+
+        // Handle common phone formats
+        if (phone.length === 10) {
+            // US phone without country code
+            phone = '1' + phone;
+        } else if (phone.length === 11 && phone[0] === '1') {
+            // US phone with country code
+            // Already correct
+        } else if (phone.length < 10) {
+            // Too short to be valid
+            log("Phone number too short:", phone);
+            return null;
+        }
+
+        // Format as E.164
+        phone = '+' + phone;
+
+        return phone;
+    }
+
+    // ========================================
+    // ENHANCED: GCLID Storage with Expiry
+    // ========================================
+
+    function storeGCLID(gclid) {
+        if (!gclid) return;
+
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + config.gclid_cookie_days);
+
+        // Store in cookie with proper domain setting
+        const domain = window.location.hostname.split('.').slice(-2).join('.');
+        document.cookie = `gclid=${gclid};expires=${expiryDate.toUTCString()};path=/;domain=.${domain}`;
+
+        // Also store with metadata in localStorage
+        const gclid_data = {
+            value: gclid,
+            timestamp: Date.now(),
+            expires: expiryDate.getTime(),
+            source_url: window.location.href,
+            client_id: clientId
+        };
+
+        try {
+            localStorage.setItem(`gclid_${clientId}`, JSON.stringify(gclid_data));
+            log("GCLID stored:", gclid, "expires:", expiryDate.toISOString());
+        } catch (e) {
+            log("Error storing GCLID:", e);
+        }
+    }
+
+    function getStoredGCLID() {
+        try {
+            const stored = localStorage.getItem(`gclid_${clientId}`);
+            if (stored) {
+                const data = JSON.parse(stored);
+                // Check if not expired
+                if (data.expires > Date.now()) {
+                    return data.value;
+                } else {
+                    log("Stored GCLID expired");
+                    localStorage.removeItem(`gclid_${clientId}`);
+                }
+            }
+        } catch (e) {
+            log("Error retrieving GCLID:", e);
+        }
+
+        // Fallback to cookie
+        const cookies = document.cookie.split(';');
+        for (const cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'gclid') {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    // ========================================
     // ENHANCED: Persistent Session Management
     // ========================================
 
@@ -80,7 +185,7 @@
             if (stored) {
                 const data = JSON.parse(stored);
                 // Check if session is still valid (30 minutes)
-                if (Date.now() - data.created < config.sessionDuration) {
+                if (Date.now() - data.updated < config.sessionDuration) {
                     return data;
                 }
             }
@@ -120,25 +225,40 @@
         utm_content: urlParams.get("utm_content")
     };
 
+    // Store GCLID if present
+    if (currentPageParams.gclid) {
+        storeGCLID(currentPageParams.gclid);
+    }
+
     // Initialize or retrieve session
     let sessionData = getSessionData();
 
     // If we have tracking params on current page, create/update session
     if (currentPageParams.gclid || currentPageParams.wbraid || currentPageParams.gbraid) {
         log("Found tracking params on current page, saving to session");
+
+        // Calculate GCLID expiry
+        const gclidExpiry = currentPageParams.gclid ?
+            new Date(Date.now() + (config.gclid_cookie_days * 24 * 60 * 60 * 1000)).toISOString() :
+            null;
+
         sessionData = {
             sessionId: generateSessionId(),
             trackingParams: currentPageParams,
+            gclidExpiry: gclidExpiry,
             landingPage: window.location.href,
             created: Date.now(),
             pageViews: [window.location.pathname]
         };
         saveSessionData(sessionData);
     } else if (!sessionData) {
+        // Check for stored GCLID from previous session
+        const storedGCLID = getStoredGCLID();
+
         // No existing session and no tracking params - create basic session
         sessionData = {
             sessionId: generateSessionId(),
-            trackingParams: {},
+            trackingParams: storedGCLID ? { gclid: storedGCLID } : {},
             landingPage: window.location.href,
             created: Date.now(),
             pageViews: [window.location.pathname]
@@ -163,8 +283,8 @@
         // Check for manually set values first
         if (window.pixelEmail || window.pixelPhone) {
             return {
-                email: window.pixelEmail || null,
-                phone: window.pixelPhone || null
+                email: normalizeEmail(window.pixelEmail),
+                phone: normalizePhone(window.pixelPhone)
             };
         }
 
@@ -273,8 +393,8 @@
                 const elements = document.querySelectorAll(selector);
                 for (const element of elements) {
                     if (element.value && element.value.includes('@')) {
-                        email = element.value;
-                        log("Found email:", email);
+                        email = normalizeEmail(element.value);
+                        log("Found email (normalized):", email);
                         break;
                     }
                 }
@@ -291,9 +411,11 @@
                     const value = element.value.trim();
                     // More flexible phone validation
                     if (value && value.length >= 7 && /[\d\s\-\(\)\+]+/.test(value)) {
-                        phone = value;
-                        log("Found phone:", phone);
-                        break;
+                        phone = normalizePhone(value);
+                        if (phone) {
+                            log("Found phone (normalized):", phone);
+                            break;
+                        }
                     }
                 }
                 if (phone) break;
@@ -353,18 +475,22 @@
         const payload = {
             client_id: clientId,
             ...trackingParams, // This now includes persisted params
+            gclid_expires_at: sessionData.gclidExpiry, // Add GCLID expiry
             page_url: window.location.href,
             page_title: document.title,
             referrer: document.referrer,
             platform: getPlatform(),
-            email,
-            phone,
+            email: email, // Already normalized
+            phone: phone, // Already normalized
+            normalized_email: email, // Send both for backward compatibility
+            normalized_phone: phone,
             timestamp: new Date().toISOString(),
             // Additional tracking data
             session_id: sessionData.sessionId,
             landing_page: sessionData.landingPage,
             pages_viewed: sessionData.pageViews.length,
-            time_on_site: Math.floor((Date.now() - sessionData.created) / 1000)
+            time_on_site: Math.floor((Date.now() - sessionData.created) / 1000),
+            user_agent: navigator.userAgent
         };
 
         log("Sending data (attempt " + attemptNumber + "):", payload);
@@ -482,11 +608,11 @@
     window.pixelTrack = {
         track: () => sendTrackingData(1, true),
         setEmail: (email) => {
-            window.pixelEmail = email;
+            window.pixelEmail = normalizeEmail(email);
             sendTrackingData(1, true);
         },
         setPhone: (phone) => {
-            window.pixelPhone = phone;
+            window.pixelPhone = normalizePhone(phone);
             sendTrackingData(1, true);
         },
         debug: (enabled) => {
@@ -501,8 +627,10 @@
             savePageData();
         },
         getSession: () => sessionData,
+        getGCLID: () => getStoredGCLID(),
         clearSession: () => {
             localStorage.removeItem(STORAGE_KEY);
+            localStorage.removeItem(`gclid_${clientId}`);
             sessionStorage.clear();
         }
     };

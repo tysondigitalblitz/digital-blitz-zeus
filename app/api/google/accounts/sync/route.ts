@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
         let businessError;
 
         // Try with original businessId first
-        const { data: business1, error: error1 } = await supabase
+        const { data: business1 } = await supabase
             .from('businesses')
             .select('*')
             .eq('id', businessId)

@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
             }))
         });
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
         console.error('DEBUG: Error fetching conversion actions:', {
             message: error.message,
