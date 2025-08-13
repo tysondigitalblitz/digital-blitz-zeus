@@ -5,9 +5,11 @@ import supabase from '@/lib/supabase/server';
 // GET single business
 export async function GET(
     req: NextRequest,
-    { params }: { params: { id: string } }
+    context: { params: Promise<{ id: string }> }  // Fixed: params is now a Promise
 ) {
     try {
+        const { id } = await context.params;  // Fixed: await the params
+
         const { data, error } = await supabase
             .from('businesses')
             .select(`
@@ -17,7 +19,7 @@ export async function GET(
           conversion_actions:google_ads_conversion_actions(*)
         )
       `)
-            .eq('id', params.id)
+            .eq('id', id)  // Use the awaited id
             .single();
 
         if (error) throw error;
@@ -37,9 +39,10 @@ export async function GET(
 // PATCH update business
 export async function PATCH(
     req: NextRequest,
-    { params }: { params: { id: string } }
+    context: { params: Promise<{ id: string }> }  // Fixed: params is now a Promise
 ) {
     try {
+        const { id } = await context.params;  // Fixed: await the params
         const body = await req.json();
 
         const { data, error } = await supabase
@@ -48,7 +51,7 @@ export async function PATCH(
                 ...body,
                 updated_at: new Date().toISOString(),
             })
-            .eq('id', params.id)
+            .eq('id', id)  // Use the awaited id
             .select()
             .single();
 
@@ -70,14 +73,16 @@ export async function PATCH(
 // DELETE business
 export async function DELETE(
     req: NextRequest,
-    { params }: { params: { id: string } }
+    context: { params: Promise<{ id: string }> }  // Fixed: params is now a Promise
 ) {
     try {
+        const { id } = await context.params;  // Fixed: await the params
+
         // Check if business exists
         const { data: business, error: checkError } = await supabase
             .from('businesses')
             .select('id, name')
-            .eq('id', params.id)
+            .eq('id', id)  // Use the awaited id
             .single();
 
         if (checkError || !business) {
@@ -93,7 +98,7 @@ export async function DELETE(
         const { data: googleAccounts } = await supabase
             .from('google_ads_accounts')
             .select('id')
-            .eq('business_id', params.id);
+            .eq('business_id', id);  // Use the awaited id
 
         if (googleAccounts && googleAccounts.length > 0) {
             const accountIds = googleAccounts.map(acc => acc.id);
@@ -115,25 +120,25 @@ export async function DELETE(
         await supabase
             .from('google_ads_accounts')
             .delete()
-            .eq('business_id', params.id);
+            .eq('business_id', id);  // Use the awaited id
 
         // 3. Delete Google conversions
         await supabase
             .from('google_conversions')
             .delete()
-            .eq('business_id', params.id);
+            .eq('business_id', id);  // Use the awaited id
 
         // 4. Delete Meta conversions (if any)
         await supabase
             .from('meta_conversions')
             .delete()
-            .eq('business_id', params.id);
+            .eq('business_id', id);  // Use the awaited id
 
         // 5. Finally delete the business
         const { error: deleteError } = await supabase
             .from('businesses')
             .delete()
-            .eq('id', params.id);
+            .eq('id', id);  // Use the awaited id
 
         if (deleteError) {
             console.error('Error deleting business:', deleteError);
