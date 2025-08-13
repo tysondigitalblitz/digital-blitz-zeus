@@ -4,15 +4,21 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { User } from '@supabase/auth-helpers-nextjs';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export default function HomePage() {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const supabase = createClientComponentClient();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
 
   useEffect(() => {
+    // 🔧 Initialize Supabase client in useEffect to prevent prerender issues
+    const client = createClientComponentClient();
+    setSupabase(client);
+
     const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await client.auth.getUser();
       setUser(user);
       setIsLoading(false);
     };
@@ -20,7 +26,7 @@ export default function HomePage() {
 
     // Create floating particles
     createParticles();
-  }, [supabase]);
+  }, []);
 
   const createParticles = () => {
     const particlesContainer = document.getElementById('particles');
