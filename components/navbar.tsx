@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { Menu, X, Home, Upload, BarChart3, Settings, LogOut, User, Building2, ExternalLink, ArrowRight } from 'lucide-react';
+import { Menu, X, Home, Upload, BarChart3, Settings, LogOut, User, Building2, ExternalLink, ArrowRight, AlertCircle } from 'lucide-react';
 
 const Navbar = () => {
     const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -43,11 +43,11 @@ const Navbar = () => {
         { name: 'Dashboard', href: '/dashboard', icon: Home },
         { name: 'Upload', href: '/dashboard/google/upload', icon: Upload },
         { name: 'Reports', href: '/dashboard/google', icon: BarChart3 },
-        // { name: 'Businesses', href: '/dashboard/google/settings', icon: Building2 },
         { name: 'Google Settings', href: '/dashboard/google/settings', icon: Settings },
         { name: 'Test', href: '/dashboard/google/test', icon: ExternalLink },
         { name: 'Config', href: '/dashboard/businesses', icon: Building2 },
         { name: 'Enhance Conversions', href: '/dashboard/google/enhance-conversions', icon: ArrowRight },
+        { name: 'Google Guide', href: '/dashboard/google/how-to', icon: AlertCircle },
     ];
 
     const isActive = (href: string) => pathname === href;

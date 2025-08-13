@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // app/api/test/database/route.ts
 import { NextResponse } from 'next/server';
 import supabase from '@/lib/supabase/server';
@@ -24,7 +25,7 @@ export async function GET() {
             'click_events'
         ];
 
-        const tableChecks = {};
+        const tableChecks: { [key: string]: boolean } = {};
 
         for (const table of requiredTables) {
             try {

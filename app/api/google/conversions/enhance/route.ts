@@ -2,8 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
-import crypto from 'crypto';
 import supabase from '@/lib/supabase/server';
+import { googleAdsClient } from '@/lib/google-ads/config';
 
 interface Record {
     purchase_date?: string;
@@ -39,6 +39,19 @@ interface Record {
     id?: string;
     matched_gclid?: string;
 }
+
+interface MatchResult {
+    gclid?: string | null;
+    match_type: string;
+    match_confidence: number;
+    click_event_id?: string;
+    matched_field?: string;
+    google_lead_id?: string;
+    campaign_id?: string;
+    ad_group_id?: string;
+    submission_date?: string;
+}
+
 // Normalization functions
 function normalizeEmail(email: string | null): string | null {
     if (!email) return null;
@@ -61,10 +74,6 @@ function normalizePhone(phone: string | null): string | null {
     return '+' + phone;
 }
 
-function hashSHA256(value: string): string {
-    return crypto.createHash('sha256').update(value).digest('hex');
-}
-
 // Matching engine
 // app/api/google/conversions/enhance/route.ts (corrected matching function)
 
@@ -73,7 +82,7 @@ async function findClickEventMatch(
     phone: string | null,
     purchaseDate: Date,
     businessId: string  // Changed from clientId
-) {
+): Promise<MatchResult | null> {
     try {
         // First, get the pixel_id for this business
         const { data: business } = await supabase
@@ -139,11 +148,79 @@ async function findClickEventMatch(
     }
 }
 
+// app/api/google/conversions/enhance/route.ts (add this function)
+
+async function findGoogleLeadFormMatch(
+    email: string | null,
+    phone: string | null,
+    businessId: string
+): Promise<MatchResult | null> {
+    try {
+        // Get Google Ads accounts for this business
+        const { data: accounts } = await supabase
+            .from('google_ads_accounts')
+            .select('*')
+            .eq('business_id', businessId)
+            .eq('is_active', true);
+
+        if (!accounts || accounts.length === 0) {
+            console.log('No Google Ads accounts found for business');
+            return null;
+        }
+
+        // For each account, query Google Ads API directly
+        for (const account of accounts) {
+            try {
+                // Now this method exists!
+                const leadForms = await googleAdsClient.getLeadFormSubmissions(
+                    account.customer_id,
+                    account.refresh_token
+                );
+
+                // Process the results
+                if (leadForms && leadForms.length > 0) {
+                    for (const submission of leadForms) {
+                        // Normalize the submission data for comparison
+                        const submissionEmail = normalizeEmail(submission.email);
+                        const submissionPhone = normalizePhone(submission.phone);
+
+                        // Check for matches
+                        const emailMatch = email && submissionEmail &&
+                            email.toLowerCase() === submissionEmail.toLowerCase();
+                        const phoneMatch = phone && submissionPhone &&
+                            phone === submissionPhone;
+
+                        if (emailMatch || phoneMatch) {
+                            console.log('Found Google Lead Form match!');
+                            return {
+                                gclid: null, // Lead forms don't have GCLID
+                                match_type: 'google_lead_form',
+                                match_confidence: 90,
+                                google_lead_id: submission.id,
+                                campaign_id: submission.campaign,
+                                matched_field: emailMatch ? 'email' : 'phone'
+                            };
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(`Error querying lead forms for account ${account.customer_id}:`, error);
+                // Continue to next account
+            }
+        }
+
+        return null;
+    } catch (error) {
+        console.error('Error finding Google lead form match:', error);
+        return null;
+    }
+}
+
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData();
         const file = formData.get('file') as File;
-        const businessId = formData.get('businessId') as string;        // const conversionActionId = formData.get('conversionActionId') as string;
+        const businessId = formData.get('businessId') as string;
         const conversionActionName = formData.get('conversionActionName') as string || 'Offline Purchase';
 
         if (!file || !businessId) {
@@ -170,6 +247,7 @@ export async function POST(req: NextRequest) {
         const matchStats = {
             total: records.length,
             gclid_matched: 0,
+            lead_form_matched: 0,
             enhanced_only: 0,
             no_match: 0
         };
@@ -190,13 +268,25 @@ export async function POST(req: NextRequest) {
             );
 
             // Try to find matching click event
-            const match = await findClickEventMatch(
+            let match = await findClickEventMatch(
                 normalizedEmail,
                 normalizedPhone,
                 purchaseDate,
                 businessId
             );
 
+            if (!match?.gclid) {
+                const leadFormMatch = await findGoogleLeadFormMatch(
+                    normalizedEmail,
+                    normalizedPhone,
+                    businessId
+                );
+
+                // Use lead form match if found
+                if (leadFormMatch) {
+                    match = leadFormMatch;
+                }
+            }
             // Build enhanced record with all Google Ads required fields
             const enhancedRecord = {
                 // Original data
@@ -208,23 +298,18 @@ export async function POST(req: NextRequest) {
                 'Conversion Time': purchaseDate.toISOString().replace('T', ' ').replace('.000Z', '+00:00'),
                 'Conversion Value': record.purchase_amount || record.amount || record.value || '',
                 'Conversion Currency': 'USD',
+                'Google Lead ID': match?.google_lead_id || '',
 
-                // Enhanced conversion fields (unhashed for review)
-                'Email': normalizedEmail || record.email || '',
-                'Phone': normalizedPhone || record.phone || '',
-                'First Name': record.first_name || record.firstName || '',
-                'Last Name': record.last_name || record.lastName || '',
-                'Street Address': record.address || record.street || '',
-                'City': record.city || '',
-                'State': record.state || record.region || '',
-                'Postal Code': record.zip || record.zip_code || record.postal_code || '',
-                'Country': record.country || 'US',
-
-                // Hashed fields for Google Ads
-                'Hashed Email': normalizedEmail ? hashSHA256(normalizedEmail) : '',
-                'Hashed Phone': normalizedPhone ? hashSHA256(normalizedPhone) : '',
-                'Hashed First Name': record.first_name ? hashSHA256(record.first_name.toLowerCase()) : '',
-                'Hashed Last Name': record.last_name ? hashSHA256(record.last_name.toLowerCase()) : '',
+                // Enhanced conversion fields (matching upload service expectations)
+                'email': normalizedEmail || record.email || '',                    // Changed from 'Email'
+                'phone': normalizedPhone || record.phone || '',                    // Changed from 'Phone'
+                'first_name': record.first_name || record.firstName || '',         // Changed from 'First Name'
+                'last_name': record.last_name || record.lastName || '',            // Changed from 'Last Name'
+                'street_address': record.address || record.street || '',           // Changed from 'Street Address'
+                'city': record.city || '',                                         // Keep as is
+                'state': record.state || record.region || '',                     // Keep as is
+                'zip_code': record.zip || record.zip_code || record.postal_code || '', // Changed from 'Postal Code'
+                'country': record.country || 'US',                                // Keep as is
 
                 // Metadata for tracking
                 'Match Type': match?.match_type || 'no_match',
@@ -236,9 +321,10 @@ export async function POST(req: NextRequest) {
 
             enhancedRecords.push(enhancedRecord);
 
-            // Update stats
             if (match?.gclid) {
                 matchStats.gclid_matched++;
+            } else if (match?.match_type === 'google_lead_form') {
+                matchStats.lead_form_matched++;
             } else if (match?.match_type === 'enhanced_only') {
                 matchStats.enhanced_only++;
             } else {
@@ -254,19 +340,15 @@ export async function POST(req: NextRequest) {
             'Conversion Value',
             'Conversion Currency',
             'Order ID',
-            'Email',
-            'Phone',
-            'First Name',
-            'Last Name',
-            'Street Address',
-            'City',
-            'State',
-            'Postal Code',
-            'Country',
-            'Hashed Email',
-            'Hashed Phone',
-            'Hashed First Name',
-            'Hashed Last Name',
+            'email',
+            'phone',
+            'first_name',
+            'last_name',
+            'street_address',
+            'city',
+            'state',
+            'zip_code',
+            'country',
             'Match Type',
             'Match Confidence',
             'Match Field',

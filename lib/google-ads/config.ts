@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // lib/google-ads/config.ts - Fixed Enhanced Conversions Upload
 import { GoogleAdsApi } from 'google-ads-api';
 // import crypto from 'crypto';
@@ -151,6 +152,62 @@ export class GoogleAdsClient {
         } catch (error) {
             console.error('Error checking enhanced conversions settings:', error);
             throw error;
+        }
+    }
+
+    // Add this method to your GoogleAdsClient class in config.ts
+    async getLeadFormSubmissions(customerId: string, refreshToken: string) {
+        try {
+            const customer = await this.getCustomer(customerId, refreshToken);
+
+            const query = `
+            SELECT 
+                lead_form_submission.resource_name,
+                lead_form_submission.id,
+                lead_form_submission.campaign,
+                lead_form_submission.ad_group,
+                lead_form_submission.lead_form_submission_data.lead_form_submission_fields,
+                lead_form_submission.submission_date_time
+            FROM lead_form_submission
+            WHERE segments.date DURING LAST_90_DAYS
+            LIMIT 1000
+        `;
+
+            const result = await customer.query(query);
+
+            // Process and return the lead form data
+            return result.map((row: any) => {
+                const fields = row.lead_form_submission?.lead_form_submission_data?.lead_form_submission_fields || [];
+
+                // Extract common fields from the submission
+                const getFieldValue = (fieldType: string) => {
+                    const field = fields.find((f: any) => f.field_type === fieldType);
+                    return field?.field_value || null;
+                };
+
+                return {
+                    id: row.lead_form_submission.id,
+                    resourceName: row.lead_form_submission.resource_name,
+                    campaign: row.lead_form_submission.campaign,
+                    adGroup: row.lead_form_submission.ad_group,
+                    submissionDateTime: row.lead_form_submission.submission_date_time,
+                    // Extract common fields
+                    email: getFieldValue('EMAIL'),
+                    phone: getFieldValue('PHONE_NUMBER'),
+                    firstName: getFieldValue('FIRST_NAME'),
+                    lastName: getFieldValue('LAST_NAME'),
+                    city: getFieldValue('CITY'),
+                    state: getFieldValue('PROVINCE'),
+                    postalCode: getFieldValue('POSTAL_CODE'),
+                    country: getFieldValue('COUNTRY'),
+                    // Keep raw fields for any custom fields
+                    rawFields: fields
+                };
+            });
+        } catch (error) {
+            console.error('Error fetching lead form submissions:', error);
+            // Return empty array if error (e.g., no lead forms exist)
+            return [];
         }
     }
 
