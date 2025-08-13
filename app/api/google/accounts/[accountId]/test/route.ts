@@ -5,11 +5,11 @@ import { cookies } from 'next/headers';
 
 export async function POST(
     req: NextRequest,
-    { params }: { params: { accountId: string } }
+    context: { params: Promise<{ accountId: string }> }  // Fixed: params is now a Promise
 ) {
     try {
         const supabase = createRouteHandlerClient({ cookies });
-        const { accountId } = params;
+        const { accountId } = await context.params;  // Fixed: await the params
 
         // Get the account details
         const { data: account, error: accountError } = await supabase
@@ -116,11 +116,11 @@ export async function POST(
 // DELETE endpoint to remove account
 export async function DELETE(
     req: NextRequest,
-    { params }: { params: { accountId: string } }
+    context: { params: Promise<{ accountId: string }> }  // Fixed: params is now a Promise
 ) {
     try {
         const supabase = createRouteHandlerClient({ cookies });
-        const { accountId } = params;
+        const { accountId } = await context.params;  // Fixed: await the params
 
         // Delete conversion actions first (foreign key constraint)
         await supabase

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // app/api/dashboard/activity/route.ts
 import { NextResponse } from 'next/server';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
@@ -34,14 +35,19 @@ export async function GET() {
             .limit(10);
 
         if (!googleSyncError && googleSyncLogs) {
-            googleSyncLogs.forEach(log => {
+            googleSyncLogs.forEach((log: any) => {  // Added type annotation to fix the issue
+                // Access the account name correctly - it should be a single object, not an array
+                const accountName = Array.isArray(log.google_ads_accounts)
+                    ? log.google_ads_accounts[0]?.account_name
+                    : log.google_ads_accounts?.account_name;
+
                 activity.push({
                     id: `google-sync-${log.id}`,
                     type: 'sync',
                     platform: 'google',
                     description: log.status === 'success'
-                        ? `Synced ${log.conversions_accepted}/${log.conversions_sent} conversions to ${log.google_ads_accounts?.account_name}`
-                        : `Failed to sync conversions to ${log.google_ads_accounts?.account_name}: ${log.error_message}`,
+                        ? `Synced ${log.conversions_accepted}/${log.conversions_sent} conversions to ${accountName || 'Google Ads'}`
+                        : `Failed to sync conversions to ${accountName || 'Google Ads'}: ${log.error_message}`,
                     timestamp: log.started_at,
                     status: log.status === 'success' ? 'success' : 'error'
                 });
@@ -67,14 +73,19 @@ export async function GET() {
             // Group by batch_id to avoid showing individual conversions
             const batches = new Map();
 
-            recentGoogleUploads.forEach(upload => {
+            recentGoogleUploads.forEach((upload: any) => {  // Added type annotation
                 const batchKey = upload.upload_batch_id || upload.created_at;
                 if (!batches.has(batchKey)) {
+                    // Handle businesses relation correctly
+                    const businessName = Array.isArray(upload.businesses)
+                        ? upload.businesses[0]?.name
+                        : upload.businesses?.name;
+
                     batches.set(batchKey, {
                         id: upload.id,
                         created_at: upload.created_at,
                         file_name: upload.file_name,
-                        business_name: upload.businesses?.name,
+                        business_name: businessName,
                         count: 0,
                         matched: 0,
                         synced: 0
@@ -88,14 +99,14 @@ export async function GET() {
             });
 
             // Convert batches to activity items
-            Array.from(batches.values()).slice(0, 5).forEach(batch => {
+            Array.from(batches.values()).slice(0, 5).forEach((batch: any) => {
                 activity.push({
                     id: `google-upload-${batch.id}`,
                     type: 'upload',
                     platform: 'google',
                     description: batch.file_name
-                        ? `Uploaded ${batch.count} conversions from ${batch.file_name} for ${batch.business_name}`
-                        : `Uploaded ${batch.count} conversions for ${batch.business_name}`,
+                        ? `Uploaded ${batch.count} conversions from ${batch.file_name} for ${batch.business_name || 'Unknown Business'}`
+                        : `Uploaded ${batch.count} conversions for ${batch.business_name || 'Unknown Business'}`,
                     timestamp: batch.created_at,
                     status: 'success'
                 });
@@ -129,7 +140,7 @@ export async function GET() {
         if (!metaUploadError && recentMetaUploads) {
             const metaBatches = new Map();
 
-            recentMetaUploads.forEach(upload => {
+            recentMetaUploads.forEach((upload: any) => {  // Added type annotation
                 const batchKey = upload.upload_batch_id || upload.created_at;
                 if (!metaBatches.has(batchKey)) {
                     metaBatches.set(batchKey, {
@@ -147,7 +158,7 @@ export async function GET() {
                 if (upload.synced_to_meta) batch.synced++;
             });
 
-            Array.from(metaBatches.values()).slice(0, 3).forEach(batch => {
+            Array.from(metaBatches.values()).slice(0, 3).forEach((batch: any) => {
                 activity.push({
                     id: `meta-upload-${batch.id}`,
                     type: 'upload',

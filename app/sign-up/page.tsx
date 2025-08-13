@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Link from 'next/link';
-import { Mail, Lock, User, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, User, AlertCircle, CheckCircle, Loader2, Shield } from 'lucide-react';
 
 const SignUpPage = () => {
     const [email, setEmail] = useState('');
@@ -13,6 +13,11 @@ const SignUpPage = () => {
     const [success, setSuccess] = useState(false);
     const [loading, setLoading] = useState(false);
     const supabase = createClientComponentClient();
+
+    // Domain validation function
+    const isValidDomain = (email: string) => {
+        return email.toLowerCase().endsWith('@digitalblitz.media');
+    };
 
     const validatePassword = () => {
         if (password.length < 6) {
@@ -29,6 +34,12 @@ const SignUpPage = () => {
     const handleSignUp = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+
+        // Validate email domain before proceeding
+        if (!isValidDomain(email)) {
+            setError('Registration restricted to @digitalblitz.media email addresses only.');
+            return;
+        }
 
         if (!validatePassword()) {
             return;
@@ -49,7 +60,12 @@ const SignUpPage = () => {
             });
 
             if (error) {
-                setError(error.message);
+                // Customize error messages for better UX
+                if (error.message.includes('User already registered')) {
+                    setError('An account with this email already exists. Please try signing in instead.');
+                } else {
+                    setError(error.message);
+                }
             } else if (data.user) {
                 setSuccess(true);
             }
@@ -60,6 +76,20 @@ const SignUpPage = () => {
             setLoading(false);
         }
     };
+
+    // Real-time email validation
+    const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newEmail = e.target.value;
+        setEmail(newEmail);
+
+        // Clear error when user starts typing
+        if (error && error.includes('Registration restricted')) {
+            setError('');
+        }
+    };
+
+    // Check if email is valid for styling
+    const emailHasError = email && !isValidDomain(email);
 
     if (success) {
         return (
@@ -73,7 +103,7 @@ const SignUpPage = () => {
                             <div className="ml-3">
                                 <h3 className="text-sm font-medium text-green-800">Registration successful!</h3>
                                 <div className="mt-2 text-sm text-green-700">
-                                    <p>Please check your email to verify your account.</p>
+                                    <p>Please check your <strong>@digitalblitz.media</strong> email to verify your account.</p>
                                 </div>
                                 <div className="mt-4">
                                     <Link
@@ -95,6 +125,9 @@ const SignUpPage = () => {
         <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
             <div className="max-w-md w-full space-y-8">
                 <div>
+                    <div className="flex justify-center">
+                        <Shield className="h-12 w-12 text-blue-600" />
+                    </div>
                     <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
                         Create your account
                     </h2>
@@ -104,6 +137,16 @@ const SignUpPage = () => {
                             sign in to existing account
                         </Link>
                     </p>
+
+                    {/* Domain restriction notice */}
+                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                        <div className="flex items-center">
+                            <Shield className="h-4 w-4 text-blue-500 mr-2" />
+                            <p className="text-xs text-blue-700">
+                                Registration restricted to <span className="font-mono font-semibold">@digitalblitz.media</span> email addresses
+                            </p>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="mt-8 space-y-6">
@@ -149,7 +192,7 @@ const SignUpPage = () => {
                             </label>
                             <div className="mt-1 relative">
                                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <Mail className="h-5 w-5 text-gray-400" />
+                                    <Mail className={`h-5 w-5 ${emailHasError ? 'text-red-400' : 'text-gray-400'}`} />
                                 </div>
                                 <input
                                     id="email"
@@ -158,11 +201,24 @@ const SignUpPage = () => {
                                     autoComplete="email"
                                     required
                                     value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    className="appearance-none relative block w-full px-3 py-2 pl-10 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                                    placeholder="john@example.com"
+                                    onChange={handleEmailChange}
+                                    className={`appearance-none relative block w-full px-3 py-2 pl-10 border ${emailHasError
+                                        ? 'border-red-300 text-red-900 placeholder-red-300'
+                                        : 'border-gray-300 text-gray-900 placeholder-gray-500'
+                                        } rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm`}
+                                    placeholder="john@digitalblitz.media"
                                 />
+                                {emailHasError && (
+                                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                                        <AlertCircle className="h-4 w-4 text-red-400" />
+                                    </div>
+                                )}
                             </div>
+                            {emailHasError && (
+                                <p className="mt-1 text-xs text-red-600">
+                                    Please use your @digitalblitz.media email address
+                                </p>
+                            )}
                         </div>
 
                         <div>
@@ -214,7 +270,7 @@ const SignUpPage = () => {
                     <div>
                         <button
                             onClick={handleSignUp}
-                            disabled={loading}
+                            disabled={!!(loading || emailHasError)}
                             className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {loading ? (
