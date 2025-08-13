@@ -1,8 +1,9 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Link from 'next/link';
 import { Mail, Lock, User, AlertCircle, CheckCircle, Loader2, Shield } from 'lucide-react';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const SignUpPage = () => {
     const [email, setEmail] = useState('');
@@ -12,7 +13,13 @@ const SignUpPage = () => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState(false);
     const [loading, setLoading] = useState(false);
-    const supabase = createClientComponentClient();
+    const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+
+    // 🔧 Initialize Supabase client in useEffect to prevent prerender issues
+    useEffect(() => {
+        const client = createClientComponentClient();
+        setSupabase(client);
+    }, []);
 
     // Domain validation function
     const isValidDomain = (email: string) => {
@@ -33,6 +40,13 @@ const SignUpPage = () => {
 
     const handleSignUp = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        // Check if Supabase client is ready
+        if (!supabase) {
+            setError('Application is loading...');
+            return;
+        }
+
         setError('');
 
         // Validate email domain before proceeding
@@ -90,6 +104,18 @@ const SignUpPage = () => {
 
     // Check if email is valid for styling
     const emailHasError = email && !isValidDomain(email);
+
+    // Show loading state while Supabase client is initializing
+    if (!supabase) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="flex items-center space-x-2">
+                    <Loader2 className="animate-spin h-8 w-8 text-blue-600" />
+                    <span className="text-lg text-gray-600">Loading...</span>
+                </div>
+            </div>
+        );
+    }
 
     if (success) {
         return (
@@ -149,7 +175,7 @@ const SignUpPage = () => {
                     </div>
                 </div>
 
-                <div className="mt-8 space-y-6">
+                <form onSubmit={handleSignUp} className="mt-8 space-y-6">
                     {error && (
                         <div className="rounded-md bg-red-50 p-4">
                             <div className="flex">
@@ -269,7 +295,7 @@ const SignUpPage = () => {
 
                     <div>
                         <button
-                            onClick={handleSignUp}
+                            type="submit"
                             disabled={!!(loading || emailHasError)}
                             className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -291,7 +317,7 @@ const SignUpPage = () => {
                             Privacy Policy
                         </Link>
                     </div>
-                </div>
+                </form>
             </div>
         </div>
     );
